@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+
+# Coding Agent Documentation
+CLAUDE.md
+GEMINI.md
+swiftUI-docs/
+
+# Swift Package Manager
+.swiftpm/
