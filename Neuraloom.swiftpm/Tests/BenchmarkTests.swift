@@ -2,63 +2,137 @@ import Foundation
 import Accelerate
 
 func runBenchmarkTests() {
-    print("\n--- Running Task 5: Benchmark Tests (Utilizing Model) ---")
+    print("\n--- Running Task 5: FULL TRAINING CYCLE Benchmark (Ultimate Proof) ---")
     
-    // MARK: - Test 4: Accelerate Benchmark
-    print("[Test 4] SGDOptimizer Performance (vDSP vs Manual Loop)")
-    
-    let weightCount = 100_000
-    let iterations = 100
+    let layers = 10
+    let neuronsPerLayer = 100
+    let totalNodes = layers * neuronsPerLayer
+    let bulkIterations = 50 
     let learningRate = 0.01
     
-    // สร้าง Dummy Neurons เพื่อสร้าง Weight
-    let n1 = Neuron(activation: .linear)
-    let n2 = Neuron(activation: .linear)
+    print("[Test 4] Full Training (Forward + Backward + Update)")
+    print("  Layers: \(layers), Nodes/Layer: \(neuronsPerLayer), Total Weights: \( (layers - 1) * neuronsPerLayer * neuronsPerLayer )")
     
-    // 1. เตรียมข้อมูลสำหรับ Benchmark โดยใช้ Weight objects จริงๆ จาก Model
-    var modelWeights: [Weight] = []
-    for _ in 0..<weightCount {
-        let w = Weight(from: n1, to: n2, initialValue: 0.5)
-        w.gradient = 0.1 // จำลอง gradient
-        modelWeights.append(w)
-    }
+    // --- Setup ExecutionModel ---
+    let nodeValues = [Double](repeating: 0.0, count: totalNodes)
+    let nodeActivations: [ActivationType] = (0..<totalNodes).map { _ in .relu }
+    var weightValues: [Double] = []
+    var nodeIncoming = [[Int]](repeating: [], count: totalNodes)
+    var edgeSource = [Int]()
     
-    // สร้าง Optimizer จาก Model ของเราจริงๆ
-    let optimizer = SGDOptimizer(learningRate: learningRate)
-    
-    // --- Measure SGDOptimizer.step (Uses Accelerate) ---
-    let startModel = CFAbsoluteTimeGetCurrent()
-    for _ in 0..<iterations {
-        // นี่คือการเรียกใช้ Logic ใน Model ของเราจริงๆ
-        optimizer.step(weights: modelWeights, batchSize: 1)
-    }
-    let endModel = CFAbsoluteTimeGetCurrent()
-    let timeModel = endModel - startModel
-    
-    // --- Measure Manual Loop (No Accelerate) ---
-    // Reset values
-    for w in modelWeights { w.value = 0.5 }
-    
-    let startManual = CFAbsoluteTimeGetCurrent()
-    for _ in 0..<iterations {
-        // จำลองการอัปเดตแบบวน Loop ทีละตัว (Naive)
-        let stepSize = -learningRate / 1.0
-        for w in modelWeights {
-            w.value += w.gradient * stepSize
+    var weightIdx = 0
+    for l in 0..<(layers - 1) {
+        let startSrc = l * neuronsPerLayer
+        let startDst = (l + 1) * neuronsPerLayer
+        for dst in startDst..<(startDst + neuronsPerLayer) {
+            for src in startSrc..<(startSrc + neuronsPerLayer) {
+                weightValues.append(0.01)
+                edgeSource.append(src)
+                nodeIncoming[dst].append(weightIdx)
+                weightIdx += 1
+            }
         }
     }
-    let endManual = CFAbsoluteTimeGetCurrent()
-    let timeManual = endManual - startManual
     
-    print("Manual Loop Time: \(String(format: "%.4f", timeManual))s")
-    print("SGDOptimizer (vDSP) Time: \(String(format: "%.4f", timeModel))s")
+    let inputIndices = Array(0..<neuronsPerLayer)
+    let outputIndices = Array((totalNodes - neuronsPerLayer)..<totalNodes)
+    let topoIndices = Array(0..<totalNodes)
     
-    let speedup = timeManual / timeModel
-    print("Actual Speedup in Model: \(String(format: "%.2fx", speedup))")
+    var model = ExecutionModel(
+        nodeValues: nodeValues,
+        nodeGradients: [Double](repeating: 0.0, count: totalNodes),
+        nodeActivations: nodeActivations,
+        weightValues: weightValues,
+        weightGradients: [Double](repeating: 0.0, count: weightValues.count),
+        nodeIncomingEdgeIndices: nodeIncoming,
+        nodeOutgoingEdgeIndices: [[Int]](repeating: [], count: totalNodes),
+        edgeSourceNodeIndices: edgeSource,
+        weightIDMap: [],
+        nodeIDMap: (0..<totalNodes).map { _ in UUID() },
+        inputNodeIndices: inputIndices,
+        outputNodeIndices: outputIndices,
+        topologicalNodeIndices: topoIndices
+    )
     
-    if speedup > 1.0 {
-        print("✅ Test 4 Passed: Your SGDOptimizer is significantly faster!")
+    let data = [([Double](repeating: 1.0, count: neuronsPerLayer), [Double](repeating: 1.0, count: neuronsPerLayer))]
+    
+    // --- Scenario A: Object Graph FULL Training ---
+    class MockNode {
+        var value: Double = 0.0; var grad: Double = 0.0
+        var incoming: [MockWeight] = []
+        var activation: ActivationType = .relu
+    }
+    class MockWeight { 
+        var value: Double = 0.01; var grad: Double = 0.0
+        unowned var from: MockNode; unowned var to: MockNode
+        init(from: MockNode, to: MockNode) { self.from = from; self.to = to }
+    }
+    
+    let mockNodes: [MockNode] = (0..<totalNodes).map { _ in MockNode() }
+    var tempWeights: [MockWeight] = []
+    for l in 0..<(layers - 1) {
+        let startSrc = l * neuronsPerLayer
+        let startDst = (l + 1) * neuronsPerLayer
+        for dst in startDst..<(startDst + neuronsPerLayer) {
+            for src in startSrc..<(startSrc + neuronsPerLayer) {
+                let w = MockWeight(from: mockNodes[src], to: mockNodes[dst])
+                tempWeights.append(w)
+                mockNodes[dst].incoming.append(w)
+            }
+        }
+    }
+    let mockWeights = tempWeights
+    
+    let startA = CFAbsoluteTimeGetCurrent()
+    for _ in 0..<bulkIterations {
+        for (input, target) in data {
+            // 1. Forward
+            for i in 0..<totalNodes {
+                let n = mockNodes[i]
+                if n.incoming.isEmpty { 
+                    if i < input.count { n.value = input[i] }
+                    continue 
+                }
+                var sum = 0.0
+                for w in n.incoming { sum += w.from.value * w.value }
+                n.value = n.activation.forward(sum)
+            }
+            
+            // 2. Backward
+            for (i, idx) in outputIndices.enumerated() {
+                mockNodes[idx].grad = mockNodes[idx].value - target[i] 
+            }
+            for i in (0..<totalNodes).reversed() {
+                let n = mockNodes[i]
+                let localGrad = n.activation.backward(n.value) * n.grad
+                for w in n.incoming {
+                    w.grad += localGrad * w.from.value
+                    w.from.grad += localGrad * w.value
+                }
+            }
+            
+            // 3. Update
+            for w in mockWeights {
+                w.value -= learningRate * w.grad
+                w.grad = 0
+            }
+            for n in mockNodes { n.grad = 0 }
+        }
+    }
+    let timeA = CFAbsoluteTimeGetCurrent() - startA
+    print("\nScenario A (Object FULL Training): \(String(format: "%.4f", timeA))s")
+    
+    // --- Scenario B: ExecutionEngine FULL Training ---
+    let startB = CFAbsoluteTimeGetCurrent()
+    ExecutionEngine.train(model: &model, data: data, epochs: bulkIterations, learningRate: learningRate, lossFunction: .mse, verbose: false)
+    let timeB = CFAbsoluteTimeGetCurrent() - startB
+    print("Scenario B (Engine FULL Training): \(String(format: "%.4f", timeB))s")
+    
+    print("\nSpeedup for Full Training: \(String(format: "%.2fx", timeA / timeB))")
+    
+    if timeA / timeB > 1.0 {
+        print("✅ Success: ExecutionEngine is faster for real-world training workloads!")
     } else {
-        print("⚠️ Test 4: Speedup was minimal. (Check if weightCount is large enough for vDSP overhead)")
+        print("⚠️ Warning: ExecutionEngine is not faster than Object-based in this scenario.")
     }
 }

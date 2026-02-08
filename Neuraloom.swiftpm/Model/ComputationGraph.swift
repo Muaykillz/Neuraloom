@@ -51,13 +51,6 @@ class ComputationGraph {
         try checkConnectivity()
     }
     
-    private func resetVisitedState() {
-        for neuron in neurons.values {
-            neuron.visitedState = .unvisited
-            neuron.inDegree = 0
-        }
-    }
-    
     private func checkCycles() throws {
         for neuron in neurons.values {
             if neuron.visitedState == .unvisited {
@@ -152,103 +145,20 @@ class ComputationGraph {
         }
     }
     
-    func forward(input: [Double]) throws {
-        guard input.count == inputNeurons.count else {
-            throw GraphError.dimensionMismatch
-        }
-        
-        // Note: Gradients are NOT reset here to allow accumulation.
-        // Values are overwritten by topological computation.
-        
-        for (index, value) in input.enumerated() {
-            inputNeurons[index].value = value
-        }
-        
-        let order = try topologicalOrder
-        for neuron in order {
-            if !neuron.isInput {
-                neuron.computeOutput()
-            }
-        }
-    }
-    
-    func backward(target: [Double], lossFunction: LossFunction) throws {
-        guard target.count == outputNeurons.count else {
-            throw GraphError.dimensionMismatch
-        }
-        
-        let predicted = self.output
-        let outputGradients = lossFunction.gradient(predicted: predicted, target: target)
-        
-        for (index, neuron) in outputNeurons.enumerated() {
-            neuron.gradient = outputGradients[index]
-        }
-        
-        let order = try topologicalOrder
-        for neuron in order.reversed() {
-            neuron.backpropagate()
-        }
-    }
-    
-    func train(
-        data: [([Double], [Double])],
-        epochs: Int,
-        lossFunction: LossFunction,
-        optimizer: SGDOptimizer,
-        batchSize: Int = 1,
-        verbose: Bool = true
-    ) throws -> [Double] {
-        var lossHistory: [Double] = []
-        
-        for epoch in 1...epochs {
-            var totalLoss: Double = 0.0
-            let shuffledData = data.shuffled()
-            let batches = shuffledData.chunked(into: batchSize)
-            
-            for batch in batches {
-                resetGradients()
-                
-                for (input, target) in batch {
-                    try forward(input: input)
-                    
-                    let loss = lossFunction.compute(predicted: self.output, target: target)
-                    totalLoss += loss
-                    
-                    try backward(target: target, lossFunction: lossFunction)
-                }
-                
-                // Update weights with gradient averaging
-                optimizer.step(weights: Array(weights.values), batchSize: batch.count)
-            }
-            
-            let avgLoss = totalLoss / Double(data.count)
-            lossHistory.append(avgLoss)
-            
-            if verbose && (epoch % 10 == 0 || epoch == 1) {
-                print("Epoch \(epoch)/\(epochs): Loss = \(String(format: "%.6f", avgLoss))")
-            }
-        }
-        
-        return lossHistory
-    }
-    
     var output: [Double] {
         outputNeurons.map(\.value)
     }
     
     // MARK: - Utility
     
-    func resetGradients() {
+    func resetVisitedState() {
         for neuron in neurons.values {
-            neuron.gradient = 0.0
-        }
-        for weight in weights.values {
-            weight.resetGradient()
+            neuron.visitedState = .unvisited
+            neuron.inDegree = 0
         }
     }
     
-    func resetGradientsAndValues() {
-        resetGradients()
+    func resetValues() {
         for neuron in neurons.values {
             if !neuron.isInput {
                 neuron.value = 0.0
