@@ -11,8 +11,9 @@ struct ContentView: View {
         .onAppear {
             Task {
                 print("🚀 Starting Tests...")
+                runAllCoreEngineTests()
                 runTrainingTests()
-//                runBenchmarkTests()
+                runBenchmarkTests()
                 print("🏁 All Tests Finished.")
             }
         }
