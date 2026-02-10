@@ -39,6 +39,44 @@ func runTrainingTests() {
         print("❌ Test 1 Error: \(error)")
     }
     
+    // MARK: - Test 2: Binary Classification
+    do {
+        print("\n[Test 2] Binary Classification (Linearly Separable)")
+        let graph = ComputationGraph()
+        let x1 = graph.addNeuron(activation: .linear)
+        let x2 = graph.addNeuron(activation: .linear)
+        let bias = graph.addNeuron(activation: .linear)
+        let output = graph.addNeuron(activation: .sigmoid)
+        
+        let _ = graph.connect(from: x1, to: output)
+        let _ = graph.connect(from: x2, to: output)
+        let _ = graph.connect(from: bias, to: output)
+        
+        graph.setInputs([x1, x2, bias])
+        graph.setOutputs([output])
+        
+        let data: [([Double], [Double])] = [
+            ([0.0, 0.0, 1.0], [0.0]),
+            ([0.0, 1.0, 1.0], [0.0]),
+            ([1.0, 0.0, 1.0], [0.0]),
+            ([1.0, 1.0, 1.0], [1.0])
+        ]
+        
+        var model = try ExecutionEngine.compile(graph: graph)
+        let losses = ExecutionEngine.train(model: &model, data: data, epochs: 200, learningRate: 0.5, lossFunction: .mse, verbose: false)
+        
+        let finalLoss = losses.last ?? 1.0
+        print("Final Loss: \(String(format: "%.6f", finalLoss))")
+        
+        if finalLoss < 0.3 {
+            print("✅ Test 2 Passed")
+        } else {
+            print("❌ Test 2 Failed")
+        }
+    } catch {
+        print("❌ Test 2 Error: \(error)")
+    }
+    
     // MARK: - Test 3: XOR Problem
     do {
         print("\n[Test 3] XOR Problem (2-2-1, ReLU Hidden, Sigmoid Output)")
@@ -63,7 +101,7 @@ func runTrainingTests() {
         ]
         
         var model = try ExecutionEngine.compile(graph: graph)
-        let losses = ExecutionEngine.train(model: &model, data: xorData, epochs: 1200, learningRate: 0.1, lossFunction: .mse, verbose: false)
+        let losses = ExecutionEngine.train(model: &model, data: xorData, epochs: 2000, learningRate: 0.1, lossFunction: .mse, verbose: false)
         
         print("Final Loss: \(String(format: "%.6f", losses.last ?? 1.0))")
         

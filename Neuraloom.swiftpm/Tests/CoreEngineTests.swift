@@ -112,7 +112,7 @@ func runAllCoreEngineTests() {
         let _ = graph.connect(from: n3, to: n4)
         graph.setInputs([n1, n2]); graph.setOutputs([n4])
 
-        let order = try graph.topologicalOrder
+        let order = try graph.topologicalOrder()
         let indices = order.map { $0.id }
         let n1Index = indices.firstIndex(of: n1.id)!; let n2Index = indices.firstIndex(of: n2.id)!
         let n3Index = indices.firstIndex(of: n3.id)!; let n4Index = indices.firstIndex(of: n4.id)!

@@ -61,7 +61,7 @@ class ExecutionEngine {
             nodeIDMap: nodes.map { $0.id },
             inputNodeIndices: graph.inputNeurons.compactMap { nodeIndexMap[$0.id] },
             outputNodeIndices: graph.outputNeurons.compactMap { nodeIndexMap[$0.id] },
-            topologicalNodeIndices: try graph.topologicalOrder.compactMap { nodeIndexMap[$0.id] }
+            topologicalNodeIndices: try graph.topologicalOrder().compactMap { nodeIndexMap[$0.id] }
         )
     }
     

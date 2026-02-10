@@ -9,10 +9,6 @@ class Neuron: Identifiable, Hashable {
     var incomingWeights: [Weight] = []
     var outgoingWeights: [Weight] = []
     
-    // For topological sort and cycle detection
-    var visitedState: VisitedState = .unvisited
-    var inDegree: Int = 0
-    
     init(activation: ActivationType, id: UUID = UUID()) {
         self.id = id
         self.value = 0.0
@@ -28,13 +24,4 @@ class Neuron: Identifiable, Hashable {
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
-    
-    var isInput: Bool { incomingWeights.isEmpty }
-    var isOutput: Bool { outgoingWeights.isEmpty }
-}
-
-enum VisitedState: Int {
-    case unvisited
-    case visiting // In current DFS path (gray)
-    case visited // Finished DFS path (black)
 }
