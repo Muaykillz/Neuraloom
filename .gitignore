@@ -6,5 +6,8 @@ CLAUDE.md
 GEMINI.md
 swiftUI-docs/
 
-# Swift Package Manager
-.swiftpm/
+# Swift Package Manager & Xcode
+.build/
+Neuraloom.swiftpm/.build/
+Neuraloom.swiftpm/.swiftpm/
+xcuserdata/
