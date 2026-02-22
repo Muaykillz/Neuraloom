@@ -1,21 +1,10 @@
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject var canvasViewModel = CanvasViewModel()
+    
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundColor(.accentColor)
-            Text("Hello, world!")
-        }
-        .onAppear {
-            Task {
-                print("🚀 Starting Tests...")
-                runAllCoreEngineTests()
-                runTrainingTests()
-                runBenchmarkTests()
-                print("🏁 All Tests Finished.")
-            }
-        }
+        PlaygroundView()
+            .environmentObject(canvasViewModel)
     }
 }

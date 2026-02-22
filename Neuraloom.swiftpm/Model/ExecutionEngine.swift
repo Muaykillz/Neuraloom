@@ -11,7 +11,7 @@ struct ExecutionModel {
     var weightGradients: [Double]
     
     let nodeIncomingEdgeIndices: [[Int]]
-    let nodeOutgoingEdgeIndices: [[Int]]
+    // Removed nodeOutgoingEdgeIndices as it's not used
     
     let edgeSourceNodeIndices: [Int]
     
@@ -35,7 +35,7 @@ class ExecutionEngine {
         let weights = Array(graph.weights.values)
         
         var nodeIncoming = [[Int]](repeating: [], count: nodes.count)
-        var nodeOutgoing = [[Int]](repeating: [], count: nodes.count)
+        // Removed nodeOutgoing = [[Int]](repeating: [], count: nodes.count)
         var edgeSource = [Int](repeating: 0, count: weights.count)
         
         for (wIdx, weight) in weights.enumerated() {
@@ -45,7 +45,7 @@ class ExecutionEngine {
             
             edgeSource[wIdx] = fromIdx
             nodeIncoming[toIdx].append(wIdx)
-            nodeOutgoing[fromIdx].append(wIdx)
+            // Removed nodeOutgoing[fromIdx].append(wIdx)
         }
         
         return ExecutionModel(
@@ -55,7 +55,6 @@ class ExecutionEngine {
             weightValues: weights.map { $0.value },
             weightGradients: [Double](repeating: 0.0, count: weights.count),
             nodeIncomingEdgeIndices: nodeIncoming,
-            nodeOutgoingEdgeIndices: nodeOutgoing,
             edgeSourceNodeIndices: edgeSource,
             weightIDMap: weights.map { $0.id },
             nodeIDMap: nodes.map { $0.id },
@@ -73,28 +72,39 @@ class ExecutionEngine {
         epochs: Int,
         learningRate: Double,
         lossFunction: LossFunction,
+        batchSize: Int = 1, // Added batchSize
         verbose: Bool = true
     ) -> [Double] {
         var lossHistory: [Double] = []
         
         for epoch in 1...epochs {
             var totalLoss: Double = 0.0
+            let shuffledData = data.shuffled() // Shuffle for SGD
+            let batches = shuffledData.chunked(into: batchSize) // Chunk into batches
             
-            for (input, target) in data {
-                predict(model: &model, input: input)
+            for batch in batches {
+                // Reset gradients for each batch
+                vDSP_vclrD(&model.weightGradients, 1, vDSP_Length(model.weightValues.count))
+                vDSP_vclrD(&model.nodeGradients, 1, vDSP_Length(model.nodeValues.count))
                 
-                let outputValues = model.outputNodeIndices.map { model.nodeValues[$0] }
-                totalLoss += lossFunction.compute(predicted: outputValues, target: target)
+                for (input, target) in batch {
+                    // Forward
+                    predict(model: &model, input: input)
+                    
+                    // Loss
+                    let outputValues = model.outputNodeIndices.map { model.nodeValues[$0] }
+                    totalLoss += lossFunction.compute(predicted: outputValues, target: target)
+                    
+                    // Backward
+                    let outputGradients = lossFunction.gradient(predicted: outputValues, target: target)
+                    computeBackward(model: &model, targetGradients: outputGradients)
+                }
                 
-                let outputGradients = lossFunction.gradient(predicted: outputValues, target: target)
-                computeBackward(model: &model, targetGradients: outputGradients)
-                
-                var step = -learningRate
+                // SGD Step (Apply gradients accumulated over the batch)
+                var step = -learningRate / Double(batch.count) // Scale by batch size
                 let weightCount = vDSP_Length(model.weightValues.count)
                 if weightCount > 0 {
                     vDSP_vsmaD(model.weightGradients, 1, &step, model.weightValues, 1, &model.weightValues, 1, weightCount)
-                    vDSP_vclrD(&model.weightGradients, 1, weightCount)
-                    vDSP_vclrD(&model.nodeGradients, 1, vDSP_Length(model.nodeValues.count))
                 }
             }
             

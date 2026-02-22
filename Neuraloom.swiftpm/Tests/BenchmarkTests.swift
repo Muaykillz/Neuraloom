@@ -34,6 +34,9 @@ func runBenchmarkTests() {
         }
     }
     
+    let totalWeights = weightValues.count
+    print("  Nodes: \(totalNodes), Weights: \(totalWeights)")
+    
     let inputIndices = Array(0..<neuronsPerLayer)
     let outputIndices = Array((totalNodes - neuronsPerLayer)..<totalNodes)
     let topoIndices = Array(0..<totalNodes)
@@ -45,7 +48,7 @@ func runBenchmarkTests() {
         weightValues: weightValues,
         weightGradients: [Double](repeating: 0.0, count: weightValues.count),
         nodeIncomingEdgeIndices: nodeIncoming,
-        nodeOutgoingEdgeIndices: [[Int]](repeating: [], count: totalNodes),
+        // Removed nodeOutgoingEdgeIndices as it's no longer in the struct
         edgeSourceNodeIndices: edgeSource,
         weightIDMap: [],
         nodeIDMap: (0..<totalNodes).map { _ in UUID() },
