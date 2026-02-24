@@ -96,18 +96,15 @@ class CanvasViewModel: ObservableObject {
         }
     }
 
-    func toggleInput(id: UUID) {
-        if let index = nodes.firstIndex(where: { $0.id == id }) {
-            nodes[index].isInput.toggle()
-            if nodes[index].isInput { nodes[index].isOutput = false }
+    func setRole(_ role: NodeRole, for id: UUID) {
+        guard let index = nodes.firstIndex(where: { $0.id == id }) else { return }
+        let newRole: NodeRole = nodes[index].role == role ? .hidden : role
+        nodes[index].role = newRole
+        if newRole == .bias {
+            connections.removeAll { $0.targetNodeId == id }
+            nodes[index].activation = .linear
         }
-    }
-
-    func toggleOutput(id: UUID) {
-        if let index = nodes.firstIndex(where: { $0.id == id }) {
-            nodes[index].isOutput.toggle()
-            if nodes[index].isOutput { nodes[index].isInput = false }
-        }
+        trainingService.invalidateStepping()
     }
 
     func deleteConnection(id: UUID) {
@@ -124,6 +121,10 @@ class CanvasViewModel: ObservableObject {
     
     func addConnection(from sourceId: UUID, to targetId: UUID) {
         guard sourceId != targetId else { return }
+        if let target = nodes.first(where: { $0.id == targetId }), target.isBias {
+            triggerToast("Bias nodes cannot receive connections.")
+            return
+        }
         if wouldCreateCycle(from: sourceId, to: targetId) {
             triggerToast("Cycle Detected: Feedforward networks must be acyclic.")
             return
@@ -274,11 +275,11 @@ class CanvasViewModel: ObservableObject {
     func setupMVPScenario() {
         let i1Id = UUID(); let i2Id = UUID(); let h1Id = UUID(); let h2Id = UUID(); let o1Id = UUID()
         nodes = [
-            NodeViewModel(id: i1Id, position: CGPoint(x: 100, y: 200), type: .neuron, activation: .linear, isInput: true),
-            NodeViewModel(id: i2Id, position: CGPoint(x: 100, y: 400), type: .neuron, activation: .linear, isInput: true),
+            NodeViewModel(id: i1Id, position: CGPoint(x: 100, y: 200), type: .neuron, activation: .linear, role: .input),
+            NodeViewModel(id: i2Id, position: CGPoint(x: 100, y: 400), type: .neuron, activation: .linear, role: .input),
             NodeViewModel(id: h1Id, position: CGPoint(x: 300, y: 200), type: .neuron, activation: .relu),
             NodeViewModel(id: h2Id, position: CGPoint(x: 300, y: 400), type: .neuron, activation: .relu),
-            NodeViewModel(id: o1Id, position: CGPoint(x: 500, y: 300), type: .neuron, activation: .sigmoid, isOutput: true)
+            NodeViewModel(id: o1Id, position: CGPoint(x: 500, y: 300), type: .neuron, activation: .sigmoid, role: .output)
         ]
         addConnection(from: i1Id, to: h1Id); addConnection(from: i1Id, to: h2Id)
         addConnection(from: i2Id, to: h1Id); addConnection(from: i2Id, to: h2Id)
@@ -431,6 +432,13 @@ class CanvasViewModel: ObservableObject {
     }
 }
 
+enum NodeRole: String, CaseIterable {
+    case hidden = "Hidden"
+    case input  = "Input"
+    case output = "Output"
+    case bias   = "Bias"
+}
+
 struct NodeViewModel: Identifiable {
     enum NodeType: String, CaseIterable {
         case neuron = "Neuron"
@@ -451,8 +459,11 @@ struct NodeViewModel: Identifiable {
     var position: CGPoint
     var type: NodeType
     var activation: ActivationType = .relu
-    var isInput: Bool = false
-    var isOutput: Bool = false
+    var role: NodeRole = .hidden
+
+    var isInput: Bool { role == .input }
+    var isOutput: Bool { role == .output }
+    var isBias: Bool  { role == .bias }
 }
 
 struct ConnectionViewModel: Identifiable {

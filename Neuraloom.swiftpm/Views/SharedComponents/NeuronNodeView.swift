@@ -8,14 +8,22 @@ struct NeuronNodeView: View {
 
     var isSelected: Bool { viewModel.selectedNodeId == node.id }
 
+    private var roleLabel: String {
+        switch node.role {
+        case .input:  return "I"
+        case .output: return "O"
+        case .bias:   return "1"
+        case .hidden: return "N"
+        }
+    }
+
     var body: some View {
         ZStack {
-            // Main Neuron Body with Gradient
             Circle()
                 .fill(Color.orange)
                 .frame(width: 50, height: 50)
                 .overlay(
-                    Text("N")
+                    Text(roleLabel)
                         .font(.system(.callout, design: .rounded))
                         .fontWeight(.bold)
                         .foregroundColor(.white)

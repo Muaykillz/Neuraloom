@@ -54,6 +54,7 @@ func runBenchmarkTests() {
         nodeIDMap: (0..<totalNodes).map { _ in UUID() },
         inputNodeIndices: inputIndices,
         outputNodeIndices: outputIndices,
+        biasNodeIndices: [],
         topologicalNodeIndices: topoIndices
     )
     

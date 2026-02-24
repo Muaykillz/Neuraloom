@@ -48,6 +48,7 @@ final class TrainingService {
 
         graph.setInputs(nodes.filter(\.isInput).compactMap { neuronMap[$0.id] })
         graph.setOutputs(nodes.filter(\.isOutput).compactMap { neuronMap[$0.id] })
+        graph.setBiases(nodes.filter(\.isBias).compactMap { neuronMap[$0.id] })
 
         var connWeightId: [UUID: UUID] = [:]
         for conn in connections {

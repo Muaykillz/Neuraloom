@@ -6,12 +6,14 @@ class ComputationGraph {
     
     private(set) var inputNeurons: [Neuron]
     private(set) var outputNeurons: [Neuron]
-    
+    private(set) var biasNeurons: [Neuron]
+
     init() {
         self.neurons = [:]
         self.weights = [:]
         self.inputNeurons = []
         self.outputNeurons = []
+        self.biasNeurons = []
     }
     
     // MARK: - Building
@@ -36,6 +38,10 @@ class ComputationGraph {
     
     func setOutputs(_ neurons: [Neuron]) {
         self.outputNeurons = neurons
+    }
+
+    func setBiases(_ neurons: [Neuron]) {
+        self.biasNeurons = neurons
     }
     
     // MARK: - Validation
@@ -88,11 +94,12 @@ class ComputationGraph {
     }
     
     // MARK: - Connectivity Check (BFS)
-    private func checkConnectivity() throws { // No throws, as topologicalOrder already checks for disconnected graph with cycle detection
-        guard !inputNeurons.isEmpty else { return } // Already checked by validate()
-        
-        var queue = inputNeurons
-        var visited = Set(inputNeurons.map(\.id))
+    private func checkConnectivity() throws {
+        guard !inputNeurons.isEmpty else { return }
+
+        let sources = inputNeurons + biasNeurons
+        var queue = sources
+        var visited = Set(sources.map(\.id))
         
         while !queue.isEmpty {
             let current = queue.removeFirst()

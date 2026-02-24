@@ -46,11 +46,11 @@ func runCanvasIntegrationTests() async {
     do {
         let inId = UUID(); let outId = UUID()
         let nodes: [NodeViewModel] = [
-            NodeViewModel(id: inId,  position: .zero, type: .neuron,        activation: .linear,  isInput: true),
+            NodeViewModel(id: inId,  position: .zero, type: .neuron,        activation: .linear,  role: .input),
             NodeViewModel(id: UUID(), position: .zero, type: .dataset),
             NodeViewModel(id: UUID(), position: .zero, type: .visualization),
             NodeViewModel(id: UUID(), position: .zero, type: .annotation),
-            NodeViewModel(id: outId, position: .zero, type: .neuron,        activation: .sigmoid, isOutput: true),
+            NodeViewModel(id: outId, position: .zero, type: .neuron,        activation: .sigmoid, role: .output),
         ]
         let conns = [ConnectionViewModel(sourceNodeId: inId, targetNodeId: outId)]
         do {
@@ -105,7 +105,7 @@ func runCanvasIntegrationTests() async {
     // T5: No input nodes → inputOutputNotSet
     do {
         let vm = CanvasViewModel()
-        let nodes = vm.nodes.map { n in NodeViewModel(id: n.id, position: n.position, type: n.type, activation: n.activation, isInput: false, isOutput: n.isOutput) }
+        let nodes = vm.nodes.map { n in NodeViewModel(id: n.id, position: n.position, type: n.type, activation: n.activation, role: n.role == .input ? .hidden : n.role) }
         do {
             _ = try svc.buildNetwork(nodes: nodes, connections: vm.connections)
             fail("T5: Missing inputs → error", "expected throw, got success")
@@ -119,7 +119,7 @@ func runCanvasIntegrationTests() async {
     // T6: No output nodes → inputOutputNotSet
     do {
         let vm = CanvasViewModel()
-        let nodes = vm.nodes.map { n in NodeViewModel(id: n.id, position: n.position, type: n.type, activation: n.activation, isInput: n.isInput, isOutput: false) }
+        let nodes = vm.nodes.map { n in NodeViewModel(id: n.id, position: n.position, type: n.type, activation: n.activation, role: n.role == .output ? .hidden : n.role) }
         do {
             _ = try svc.buildNetwork(nodes: nodes, connections: vm.connections)
             fail("T6: Missing outputs → error", "expected throw, got success")
