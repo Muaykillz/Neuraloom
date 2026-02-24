@@ -4,10 +4,10 @@ import SwiftUI
 class CanvasViewModel: ObservableObject {
     @Published var nodes: [NodeViewModel] = []
     @Published var connections: [ConnectionViewModel] = []
-    
+
     @Published var scale: CGFloat = 1.0
     @Published var offset: CGSize = .zero
-    
+
     @Published var activeWiringSource: UUID? = nil
     @Published var wiringTargetPosition: CGPoint? = nil
     @Published var hoveredNodeId: UUID? = nil
@@ -17,7 +17,19 @@ class CanvasViewModel: ObservableObject {
     @Published var connectionTapGlobalLocation: CGPoint? = nil
 
     @Published var toastMessage: String? = nil
-    
+
+    // MARK: - Training State
+    @Published var isTraining = false
+    @Published var currentEpoch = 0
+    @Published var totalEpochs = 500
+    @Published var learningRate: Double = 0.1
+    @Published var selectedLossFunction: LossFunction = .mse
+    @Published var currentLoss: Double? = nil
+    @Published var lossHistory: [Double] = []
+    @Published var stepGranularity: StepGranularity = .epoch
+
+    private let trainingService = TrainingService()
+
     // Internal state for smooth gestures
     private var lastMagnification: CGFloat = 1.0
     private var previousTranslation: CGSize = .zero
@@ -127,13 +139,14 @@ class CanvasViewModel: ObservableObject {
         let id: UUID
         let from: CGPoint
         let to: CGPoint
+        let value: Double
     }
-    
+
     var drawableConnections: [DrawableConnection] {
         connections.compactMap { conn in
             guard let fromNode = nodes.first(where: { $0.id == conn.sourceNodeId }),
                   let toNode = nodes.first(where: { $0.id == conn.targetNodeId }) else { return nil }
-            return DrawableConnection(id: conn.id, from: fromNode.position, to: toNode.position)
+            return DrawableConnection(id: conn.id, from: fromNode.position, to: toNode.position, value: conn.value)
         }
     }
     
@@ -261,15 +274,102 @@ class CanvasViewModel: ObservableObject {
     func setupMVPScenario() {
         let i1Id = UUID(); let i2Id = UUID(); let h1Id = UUID(); let h2Id = UUID(); let o1Id = UUID()
         nodes = [
-            NodeViewModel(id: i1Id, position: CGPoint(x: 100, y: 200), type: .neuron),
-            NodeViewModel(id: i2Id, position: CGPoint(x: 100, y: 400), type: .neuron),
-            NodeViewModel(id: h1Id, position: CGPoint(x: 300, y: 200), type: .neuron),
-            NodeViewModel(id: h2Id, position: CGPoint(x: 300, y: 400), type: .neuron),
-            NodeViewModel(id: o1Id, position: CGPoint(x: 500, y: 300), type: .neuron)
+            NodeViewModel(id: i1Id, position: CGPoint(x: 100, y: 200), type: .neuron, activation: .linear, isInput: true),
+            NodeViewModel(id: i2Id, position: CGPoint(x: 100, y: 400), type: .neuron, activation: .linear, isInput: true),
+            NodeViewModel(id: h1Id, position: CGPoint(x: 300, y: 200), type: .neuron, activation: .relu),
+            NodeViewModel(id: h2Id, position: CGPoint(x: 300, y: 400), type: .neuron, activation: .relu),
+            NodeViewModel(id: o1Id, position: CGPoint(x: 500, y: 300), type: .neuron, activation: .sigmoid, isOutput: true)
         ]
         addConnection(from: i1Id, to: h1Id); addConnection(from: i1Id, to: h2Id)
         addConnection(from: i2Id, to: h1Id); addConnection(from: i2Id, to: h2Id)
         addConnection(from: h1Id, to: o1Id); addConnection(from: h2Id, to: o1Id)
+    }
+
+    // MARK: - Training
+
+    func startTraining() {
+        guard !isTraining else { return }
+        let compiled: TrainingService.CompiledNetwork
+        do { compiled = try trainingService.buildNetwork(nodes: nodes, connections: connections) }
+        catch { triggerToast(error.localizedDescription); return }
+
+        isTraining = true
+        currentEpoch = 0
+        lossHistory = []
+        currentLoss = nil
+
+        let config = TrainingConfig(
+            learningRate: learningRate,
+            lossFunction: selectedLossFunction,
+            totalEpochs: totalEpochs,
+            batchSize: 4
+        )
+        trainingService.startTraining(compiled: compiled, config: config) { [weak self] update in
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.currentEpoch = update.epoch
+                self.currentLoss = update.loss
+                self.lossHistory.append(update.loss)
+                self.applyWeightSync(update.weightSync)
+            }
+        } onComplete: { [weak self] in
+            await MainActor.run { self?.isTraining = false }
+        }
+    }
+
+    func stopTraining() {
+        trainingService.stopTraining()
+        isTraining = false
+    }
+
+    func stepTraining() {
+        guard !isTraining else { return }
+        let config = TrainingConfig(
+            learningRate: learningRate,
+            lossFunction: selectedLossFunction,
+            totalEpochs: totalEpochs,
+            batchSize: 4
+        )
+        trainingService.stepTraining(
+            granularity: stepGranularity,
+            nodes: nodes,
+            connections: connections,
+            config: config
+        ) { [weak self] update in
+            guard let self else { return }
+            self.currentEpoch = update.epoch
+            self.currentLoss = update.loss
+            self.lossHistory.append(update.loss)
+            self.applyWeightSync(update.weightSync)
+        }
+    }
+
+    func resetTraining() {
+        trainingService.resetTraining()
+        isTraining = false
+        lossHistory = []
+        currentEpoch = 0
+        currentLoss = nil
+        for i in connections.indices {
+            connections[i].value = 0.0
+            connections[i].gradient = 0.0
+        }
+    }
+
+    func updateConnectionValue(id: UUID, value: Double) {
+        if let idx = connections.firstIndex(where: { $0.id == id }) {
+            connections[idx].value = value
+            trainingService.invalidateStepping()
+        }
+    }
+
+    private func applyWeightSync(_ sync: [UUID: (value: Double, gradient: Double)]) {
+        for (connId, vals) in sync {
+            if let ci = connections.firstIndex(where: { $0.id == connId }) {
+                connections[ci].value = vals.value
+                connections[ci].gradient = vals.gradient
+            }
+        }
     }
     
     func fitToScreen(in size: CGSize, insets: EdgeInsets) {
@@ -361,4 +461,9 @@ struct ConnectionViewModel: Identifiable {
     var targetNodeId: UUID
     var value: Double = 0.0
     var gradient: Double = 0.0
+}
+
+enum StepGranularity: String, CaseIterable {
+    case sample = "Sample"
+    case epoch  = "Epoch"
 }
