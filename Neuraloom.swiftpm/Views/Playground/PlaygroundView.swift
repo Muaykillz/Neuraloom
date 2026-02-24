@@ -40,10 +40,15 @@ struct PlaygroundView: View {
                     ZStack {
                         ForEach(canvasViewModel.drawableConnections) { conn in
                             let isSelected = canvasViewModel.selectedConnectionId == conn.id
+                            let absW = abs(conn.value)
+                            let weightColor: Color = absW < 0.05
+                                ? Color.primary.opacity(0.35)
+                                : Color.orange.opacity(0.3 + min(absW / 3.0, 1.0) * 0.7)
                             ZStack {
                                 // Visible line
                                 ConnectionView(from: conn.from, to: conn.to)
-                                    .stroke(isSelected ? Color.orange : Color.primary.opacity(0.4), lineWidth: isSelected ? 5 : 4)
+                                    .stroke(isSelected ? Color.orange : weightColor, lineWidth: isSelected ? 5 : 4)
+                                    .animation(.easeInOut(duration: 0.4), value: conn.value)
 
                                 // Hit area — strokedPath fill covers full curve including vertical lines
                                 ConnectionHitArea(from: conn.from, to: conn.to)
@@ -65,7 +70,7 @@ struct PlaygroundView: View {
                         }
                         
                         ForEach(canvasViewModel.nodes) { node in
-                            NeuronNodeView(viewModel: canvasViewModel, node: node)
+                            CanvasNodeView(viewModel: canvasViewModel, node: node)
                         }
                     }
                     .scaleEffect(canvasViewModel.scale, anchor: .topLeading)
@@ -107,20 +112,25 @@ struct PlaygroundView: View {
                 }
                 .overlay(alignment: .bottomTrailing) {
                     VStack(spacing: 12) {
-                        Button(action: { canvasViewModel.autoLayout() }) {
+                        Button { canvasViewModel.autoLayout() } label: {
                             Image(systemName: "arrow.triangle.branch")
                                 .font(.title2)
                                 .foregroundStyle(.orange)
-                                .padding(12)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Circle())
                                 .glassEffect(in: .circle)
                         }
-                        Button(action: { canvasViewModel.fitToScreen(in: geometry.size, insets: geometry.safeAreaInsets) }) {
+                        .buttonStyle(.plain)
+
+                        Button { canvasViewModel.fitToScreen(in: geometry.size, insets: geometry.safeAreaInsets) } label: {
                             Image(systemName: "scope")
                                 .font(.title2)
                                 .foregroundStyle(.orange)
-                                .padding(12)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Circle())
                                 .glassEffect(in: .circle)
                         }
+                        .buttonStyle(.plain)
                     }.padding(24)
                 }
                 .gesture(
@@ -134,6 +144,15 @@ struct PlaygroundView: View {
                         .onEnded { value in canvasViewModel.endZoom(magnification: value.magnification, anchor: value.startLocation) }
                 )
                 .navigationTitle("Playground")
+                .onAppear {
+                    DispatchQueue.main.async {
+                        canvasViewModel.fitToScreen(in: geometry.size, insets: geometry.safeAreaInsets)
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    TrainingPanelView(viewModel: canvasViewModel)
+                        .padding(.bottom, 32)
+                }
             }
         }
         .navigationSplitViewStyle(.automatic)
@@ -144,6 +163,20 @@ struct PlaygroundView: View {
               let targetPos = canvasViewModel.wiringTargetPosition,
               let targetNode = canvasViewModel.findNode(at: targetPos) else { return false }
         return canvasViewModel.wouldCreateCycle(from: sourceId, to: targetNode.id)
+    }
+}
+
+// MARK: - Canvas Node Dispatcher
+struct CanvasNodeView: View {
+    @ObservedObject var viewModel: CanvasViewModel
+    var node: NodeViewModel
+
+    var body: some View {
+        if node.type == .visualization {
+            VisualizationNodeView(viewModel: viewModel, node: node)
+        } else {
+            NeuronNodeView(viewModel: viewModel, node: node)
+        }
     }
 }
 
