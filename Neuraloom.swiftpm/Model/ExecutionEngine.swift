@@ -72,51 +72,75 @@ class ExecutionEngine {
         epochs: Int,
         learningRate: Double,
         lossFunction: LossFunction,
-        batchSize: Int = 1, // Added batchSize
-        verbose: Bool = true
+        batchSize: Int = 1,
+        verbose: Bool = true,
+        onEpoch: ((Int, Double) -> Void)? = nil
     ) -> [Double] {
         var lossHistory: [Double] = []
-        
+
         for epoch in 1...epochs {
+            if Task.isCancelled { break }
+
             var totalLoss: Double = 0.0
-            let shuffledData = data.shuffled() // Shuffle for SGD
-            let batches = shuffledData.chunked(into: batchSize) // Chunk into batches
-            
+            let shuffledData = data.shuffled()
+            let batches = shuffledData.chunked(into: batchSize)
+
             for batch in batches {
-                // Reset gradients for each batch
                 vDSP_vclrD(&model.weightGradients, 1, vDSP_Length(model.weightValues.count))
                 vDSP_vclrD(&model.nodeGradients, 1, vDSP_Length(model.nodeValues.count))
-                
+
                 for (input, target) in batch {
-                    // Forward
                     predict(model: &model, input: input)
-                    
-                    // Loss
                     let outputValues = model.outputNodeIndices.map { model.nodeValues[$0] }
                     totalLoss += lossFunction.compute(predicted: outputValues, target: target)
-                    
-                    // Backward
                     let outputGradients = lossFunction.gradient(predicted: outputValues, target: target)
                     computeBackward(model: &model, targetGradients: outputGradients)
                 }
-                
-                // SGD Step (Apply gradients accumulated over the batch)
-                var step = -learningRate / Double(batch.count) // Scale by batch size
+
+                var step = -learningRate / Double(batch.count)
                 let weightCount = vDSP_Length(model.weightValues.count)
                 if weightCount > 0 {
                     vDSP_vsmaD(model.weightGradients, 1, &step, model.weightValues, 1, &model.weightValues, 1, weightCount)
                 }
             }
-            
+
             let avgLoss = totalLoss / Double(data.count)
             lossHistory.append(avgLoss)
             if verbose && (epoch % 100 == 0 || epoch == 1) {
                 print("Epoch \(epoch): Loss \(String(format: "%.6f", avgLoss))")
             }
+            onEpoch?(epoch, avgLoss)
         }
         return lossHistory
     }
     
+    static func trainOneEpoch(
+        model: inout ExecutionModel,
+        data: [([Double], [Double])],
+        learningRate: Double,
+        lossFunction: LossFunction,
+        batchSize: Int = 1
+    ) -> Double {
+        var totalLoss: Double = 0.0
+        let batches = data.shuffled().chunked(into: batchSize)
+        for batch in batches {
+            vDSP_vclrD(&model.weightGradients, 1, vDSP_Length(model.weightValues.count))
+            vDSP_vclrD(&model.nodeGradients,   1, vDSP_Length(model.nodeValues.count))
+            for (input, target) in batch {
+                predict(model: &model, input: input)
+                let out = model.outputNodeIndices.map { model.nodeValues[$0] }
+                totalLoss += lossFunction.compute(predicted: out, target: target)
+                computeBackward(model: &model, targetGradients: lossFunction.gradient(predicted: out, target: target))
+            }
+            var step = -learningRate / Double(batch.count)
+            let wc = vDSP_Length(model.weightValues.count)
+            if wc > 0 {
+                vDSP_vsmaD(model.weightGradients, 1, &step, model.weightValues, 1, &model.weightValues, 1, wc)
+            }
+        }
+        return totalLoss / Double(data.count)
+    }
+
     // MARK: - Inference
     static func predict(model: inout ExecutionModel, input: [Double]) {
         for (i, idx) in model.inputNodeIndices.enumerated() {
