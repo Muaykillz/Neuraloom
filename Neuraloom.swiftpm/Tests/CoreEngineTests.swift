@@ -2,6 +2,11 @@ import Foundation
 
 func runAllCoreEngineTests() {
     print("\n--- Running All Core Engine Tests ---")
+    var passed = 0
+    var failed = 0
+
+    func pass(_ name: String) { print("✅ \(name)"); passed += 1 }
+    func fail(_ name: String, _ reason: String) { print("❌ \(name): \(reason)"); failed += 1 }
 
     // MARK: - Test 1: Simple Pass-Through (2 neurons)
     do {
@@ -11,15 +16,18 @@ func runAllCoreEngineTests() {
         let _ = graph.connect(from: n1, to: n2, initialWeightValue: 2.0)
         graph.setInputs([n1]); graph.setOutputs([n2])
         try graph.validate()
-        
+
         var model = try ExecutionEngine.compile(graph: graph)
         ExecutionEngine.predict(model: &model, input: [3.0])
         let output = model.nodeValues[model.outputNodeIndices[0]]
 
-        assert(abs(output - 6.0) < 0.0001, "Test 1 Failed: Simple pass-through - Expected 6.0, got \(output)")
-        print("✅ Test 1 passed: Simple pass-through")
+        if abs(output - 6.0) < 0.0001 {
+            pass("T1: Simple pass-through")
+        } else {
+            fail("T1: Simple pass-through", "Expected 6.0, got \(output)")
+        }
     } catch {
-        print("❌ Test 1 Failed: Simple pass-through - \(error.localizedDescription)")
+        fail("T1: Simple pass-through", error.localizedDescription)
     }
 
     // MARK: - Test 2: ReLU Activation
@@ -32,20 +40,23 @@ func runAllCoreEngineTests() {
         try graph.validate()
 
         var model = try ExecutionEngine.compile(graph: graph)
-        
-        // Test positive
+
         ExecutionEngine.predict(model: &model, input: [5.0])
         var output = model.nodeValues[model.outputNodeIndices[0]]
-        assert(abs(output - 5.0) < 0.0001, "Test 2 Failed: ReLU positive - Expected 5.0, got \(output)")
+        guard abs(output - 5.0) < 0.0001 else {
+            fail("T2: ReLU activation", "positive: Expected 5.0, got \(output)")
+            return
+        }
 
-        // Test negative (should clamp to 0)
         ExecutionEngine.predict(model: &model, input: [-3.0])
         output = model.nodeValues[model.outputNodeIndices[0]]
-        assert(abs(output - 0.0) < 0.0001, "Test 2 Failed: ReLU negative - Expected 0.0, got \(output)")
-
-        print("✅ Test 2 passed: ReLU activation")
+        if abs(output - 0.0) < 0.0001 {
+            pass("T2: ReLU activation")
+        } else {
+            fail("T2: ReLU activation", "negative: Expected 0.0, got \(output)")
+        }
     } catch {
-        print("❌ Test 2 Failed: ReLU activation - \(error.localizedDescription)")
+        fail("T2: ReLU activation", error.localizedDescription)
     }
 
     // MARK: - Test 3: Two Inputs → One Output (Simple Sum)
@@ -58,17 +69,18 @@ func runAllCoreEngineTests() {
         let _ = graph.connect(from: n2, to: n3, initialWeightValue: 3.0)
         graph.setInputs([n1, n2]); graph.setOutputs([n3])
         try graph.validate()
-        
+
         var model = try ExecutionEngine.compile(graph: graph)
         ExecutionEngine.predict(model: &model, input: [1.0, 2.0])
         let output = model.nodeValues[model.outputNodeIndices[0]]
-        
-        // Expected: (1.0 × 2.0) + (2.0 × 3.0) = 8.0
-        assert(abs(output - 8.0) < 0.0001, "Test 3 Failed: Multiple inputs - Expected 8.0, got \(output)")
 
-        print("✅ Test 3 passed: Multiple inputs")
+        if abs(output - 8.0) < 0.0001 {
+            pass("T3: Multiple inputs (1*2 + 2*3 = 8)")
+        } else {
+            fail("T3: Multiple inputs", "Expected 8.0, got \(output)")
+        }
     } catch {
-        print("❌ Test 3 Failed: Multiple inputs - \(error.localizedDescription)")
+        fail("T3: Multiple inputs", error.localizedDescription)
     }
 
     // MARK: - Test 4: Cycle Detection
@@ -77,7 +89,7 @@ func runAllCoreEngineTests() {
         let c1 = cycleGraph.addNeuron(activation: .linear)
         let c2 = cycleGraph.addNeuron(activation: .linear)
         let _ = cycleGraph.connect(from: c1, to: c2)
-        let _ = cycleGraph.connect(from: c2, to: c1) 
+        let _ = cycleGraph.connect(from: c2, to: c1)
         cycleGraph.setInputs([c1]); cycleGraph.setOutputs([c2])
 
         var caughtCycle = false
@@ -86,7 +98,10 @@ func runAllCoreEngineTests() {
         } catch GraphError.cycleDetected {
             caughtCycle = true
         }
-        assert(caughtCycle, "Test 4 Failed: Cycle was not detected")
+        guard caughtCycle else {
+            fail("T4: Cycle detection", "Cycle was not detected")
+            return
+        }
 
         let dagGraph = ComputationGraph()
         let d1 = dagGraph.addNeuron(activation: .linear)
@@ -97,10 +112,10 @@ func runAllCoreEngineTests() {
         let _ = dagGraph.connect(from: d2, to: d3)
         dagGraph.setInputs([d1]); dagGraph.setOutputs([d3])
         try dagGraph.validate()
-        
-        print("✅ Test 4 passed: Cycle detection (both Cycle and DAG cases)")
+
+        pass("T4: Cycle detection (both Cycle and DAG cases)")
     } catch {
-        print("❌ Test 4 Failed: unexpected error - \(error.localizedDescription)")
+        fail("T4: Cycle detection", "unexpected error: \(error.localizedDescription)")
     }
 
     // MARK: - Test 5: Topological Order
@@ -117,12 +132,13 @@ func runAllCoreEngineTests() {
         let n1Index = indices.firstIndex(of: n1.id)!; let n2Index = indices.firstIndex(of: n2.id)!
         let n3Index = indices.firstIndex(of: n3.id)!; let n4Index = indices.firstIndex(of: n4.id)!
 
-        assert(n1Index < n3Index, "Test 5 Failed: Topological order - n1 not before n3")
-        assert(n2Index < n3Index, "Test 5 Failed: Topological order - n2 not before n3")
-        assert(n3Index < n4Index, "Test 5 Failed: Topological order - n3 not before n4")
-        print("✅ Test 5 passed: Topological order")
+        if n1Index < n3Index && n2Index < n3Index && n3Index < n4Index {
+            pass("T5: Topological order")
+        } else {
+            fail("T5: Topological order", "order violated")
+        }
     } catch {
-        print("❌ Test 5 Failed: Topological order - \(error.localizedDescription)")
+        fail("T5: Topological order", error.localizedDescription)
     }
 
     // MARK: - Final Integration Test: XOR-like structure
@@ -136,26 +152,22 @@ func runAllCoreEngineTests() {
         let _ = graph.connect(from: h1, to: o1); let _ = graph.connect(from: h2, to: o1)
         graph.setInputs([i1, i2]); graph.setOutputs([o1])
         try graph.validate()
-        print("✅ XOR architecture is valid")
 
         var model = try ExecutionEngine.compile(graph: graph)
-        
+
         ExecutionEngine.predict(model: &model, input: [1.0, 0.0])
-        print("Output for [1.0, 0.0]: \(model.nodeValues[model.outputNodeIndices[0]])")
-
+        let o10 = model.nodeValues[model.outputNodeIndices[0]]
         ExecutionEngine.predict(model: &model, input: [0.0, 1.0])
-        print("Output for [0.0, 1.0]: \(model.nodeValues[model.outputNodeIndices[0]])")
-
+        let o01 = model.nodeValues[model.outputNodeIndices[0]]
         ExecutionEngine.predict(model: &model, input: [1.0, 1.0])
-        print("Output for [1.0, 1.0]: \(model.nodeValues[model.outputNodeIndices[0]])")
-        
+        let o11 = model.nodeValues[model.outputNodeIndices[0]]
         ExecutionEngine.predict(model: &model, input: [0.0, 0.0])
-        print("Output for [0.0, 0.0]: \(model.nodeValues[model.outputNodeIndices[0]])")
+        let o00 = model.nodeValues[model.outputNodeIndices[0]]
 
-        print("✅ Day 1 Complete! All core engine functionalities appear to be in place.")
+        pass("T6: XOR architecture valid — outputs: [1,0]=\(String(format:"%.3f",o10)) [0,1]=\(String(format:"%.3f",o01)) [1,1]=\(String(format:"%.3f",o11)) [0,0]=\(String(format:"%.3f",o00))")
     } catch {
-        print("❌ Final Integration Test Failed: \(error.localizedDescription)")
+        fail("T6: XOR architecture", error.localizedDescription)
     }
 
-    print("--- All Core Engine Tests Finished ---")
+    print("\n--- Core Engine Tests: \(passed) passed, \(failed) failed ---")
 }

@@ -24,6 +24,32 @@ struct NodePopoverView: View {
 
             Divider()
 
+            // Loss node info
+            if node.type == .loss {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Loss Function")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Picker("Loss", selection: $viewModel.selectedLossFunction) {
+                        Text("MSE").tag(LossFunction.mse)
+                        Text("Cross-Entropy").tag(LossFunction.crossEntropy)
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                if let loss = viewModel.currentLoss {
+                    Divider()
+                    HStack {
+                        Text("Current Loss")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(String(format: "%.6f", loss))
+                            .font(.caption.monospaced().bold())
+                    }
+                }
+            }
+
             // Neuron-only controls
             if node.type == .neuron {
                 // Activation (hidden for bias — always outputs 1)

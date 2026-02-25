@@ -5,6 +5,8 @@ struct TrainingPanelView: View {
     @State private var isExpanded = false
     @State private var epochsText = "500"
     @State private var lrText = "0.1"
+    @State private var autoStepTimer: Timer?
+    @State private var pressStart: Date?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -42,17 +44,19 @@ struct TrainingPanelView: View {
                             }
                     }
 
-                    // Epochs / Samples — label is the mode picker
+                    // Epochs / Steps picker + input
                     HStack(spacing: 4) {
                         Menu {
                             Button("Epochs")  { viewModel.stepGranularity = .epoch  }
-                            Button("Samples") { viewModel.stepGranularity = .sample }
+                            Button("Steps") { viewModel.stepGranularity = .sample }
                         } label: {
                             HStack(spacing: 3) {
-                                Text(viewModel.stepGranularity == .epoch ? "Epochs" : "Samples")
+                                Text(viewModel.stepGranularity == .epoch ? "Epochs" : "Steps")
                                     .font(.caption2)
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
                                     .foregroundColor(Color(UIColor.secondaryLabel))
-                                    .frame(minWidth: 44, alignment: .leading)
+                                    .frame(minWidth: 38, alignment: .leading)
                                 Image(systemName: "chevron.up.chevron.down")
                                     .font(.system(size: 7))
                                     .foregroundColor(Color(UIColor.secondaryLabel))
@@ -75,18 +79,34 @@ struct TrainingPanelView: View {
                     // Train section label + controls
                     Text("Train")
                         .font(.caption)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .foregroundStyle(.secondary)
 
-                    // Step — one epoch or one sample
-                    Button { viewModel.stepTraining() } label: {
-                        Image(systemName: "forward.frame.fill")
-                            .font(.title3)
-                            .foregroundStyle(viewModel.isTraining ? Color.primary.opacity(0.2) : .orange)
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(viewModel.isTraining)
+                    // Step — always one sample; hold ≥1.5s to auto-repeat
+                    Image(systemName: "forward.frame.fill")
+                        .font(.title3)
+                        .foregroundStyle(viewModel.isTraining ? Color.primary.opacity(0.2) : .orange)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                        .onLongPressGesture(minimumDuration: .infinity, pressing: { isPressing in
+                            if isPressing && !viewModel.isTraining {
+                                pressStart = .now
+                                // After 1.5s start auto-repeat
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    guard pressStart != nil else { return }
+                                    startAutoStep()
+                                }
+                            } else {
+                                // Released — if timer never started, treat as single tap
+                                let wasAutoStepping = autoStepTimer != nil
+                                stopAutoStep()
+                                if !wasAutoStepping && pressStart != nil && !viewModel.isTraining {
+                                    viewModel.stepTraining()
+                                }
+                                pressStart = nil
+                            }
+                        }, perform: {})
 
                     // Run all / Stop
                     Button {
@@ -117,7 +137,9 @@ struct TrainingPanelView: View {
                         Text(viewModel.currentLoss.map { String(format: "%.4f", $0) } ?? "—")
                             .font(.caption.monospaced().bold())
                             .foregroundStyle(lossColor)
-                        Text("\(viewModel.currentEpoch)/\(viewModel.totalEpochs)")
+                        Text(viewModel.stepGranularity == .epoch
+                             ? "\(viewModel.currentEpoch)/\(viewModel.totalEpochs)"
+                             : "\(viewModel.stepCount)/\(viewModel.totalEpochs)")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
 
@@ -158,6 +180,20 @@ struct TrainingPanelView: View {
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isExpanded)
+    }
+
+    private func startAutoStep() {
+        stopAutoStep()
+        autoStepTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            Task { @MainActor in
+                self.viewModel.stepTraining()
+            }
+        }
+    }
+
+    private func stopAutoStep() {
+        autoStepTimer?.invalidate()
+        autoStepTimer = nil
     }
 
     private var lossColor: Color {

@@ -7,11 +7,17 @@ struct VisualizationNodeView: View {
 
     var isSelected: Bool { viewModel.selectedNodeId == node.id }
 
+    private var chartData: [(Int, Double)] {
+        viewModel.lossHistory.enumerated().map { ($0.offset, $0.element) }
+    }
+
+    private let cardWidth: CGFloat = 210
+
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 14)
                 .fill(.regularMaterial)
-                .frame(width: 210, height: 148)
+                .frame(width: cardWidth, height: 148)
                 .overlay(
                     RoundedRectangle(cornerRadius: 14)
                         .stroke(
@@ -59,7 +65,7 @@ struct VisualizationNodeView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     Chart {
-                        ForEach(Array(viewModel.lossHistory.enumerated()), id: \.offset) { i, loss in
+                        ForEach(chartData, id: \.0) { i, loss in
                             LineMark(
                                 x: .value("Step", i),
                                 y: .value("Loss", loss)
@@ -84,7 +90,14 @@ struct VisualizationNodeView: View {
 
                 Spacer(minLength: 8)
             }
-            .frame(width: 210, height: 148)
+            .frame(width: cardWidth, height: 148)
+
+            // Input port (left edge)
+            Circle()
+                .fill(Color.white)
+                .frame(width: 18, height: 18)
+                .overlay(Circle().stroke(Color.purple, lineWidth: 2.5))
+                .offset(x: -(cardWidth / 2 + 4))
         }
         .position(node.position)
         .onTapGesture {

@@ -3,6 +3,9 @@ import SwiftUI
 struct ConnectionView: Shape {
     var from: CGPoint
     var to: CGPoint
+    /// When set, both control points are pushed down to this Y, creating a smooth
+    /// arc that detours below the neural network instead of cutting through it.
+    var detourY: CGFloat?
 
     var animatableData: AnimatablePair<CGPoint.AnimatableData, CGPoint.AnimatableData> {
         get { AnimatablePair(from.animatableData, to.animatableData) }
@@ -12,10 +15,21 @@ struct ConnectionView: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
         path.move(to: from)
-        let controlWidth = abs(to.x - from.x) * 0.5
-        let control1 = CGPoint(x: from.x + controlWidth, y: from.y)
-        let control2 = CGPoint(x: to.x - controlWidth, y: to.y)
-        path.addCurve(to: to, control1: control1, control2: control2)
+        if let dy = detourY {
+            // Smooth arc: both control points sit at detourY
+            path.addCurve(
+                to: to,
+                control1: CGPoint(x: from.x, y: dy),
+                control2: CGPoint(x: to.x, y: dy)
+            )
+        } else {
+            let cw = abs(to.x - from.x) * 0.5
+            path.addCurve(
+                to: to,
+                control1: CGPoint(x: from.x + cw, y: from.y),
+                control2: CGPoint(x: to.x - cw, y: to.y)
+            )
+        }
         return path
     }
 }
@@ -24,14 +38,10 @@ struct ConnectionView: Shape {
 struct ConnectionHitArea: Shape {
     var from: CGPoint
     var to: CGPoint
+    var detourY: CGFloat?
 
     func path(in rect: CGRect) -> Path {
-        var base = Path()
-        base.move(to: from)
-        let controlWidth = abs(to.x - from.x) * 0.5
-        let control1 = CGPoint(x: from.x + controlWidth, y: from.y)
-        let control2 = CGPoint(x: to.x - controlWidth, y: to.y)
-        base.addCurve(to: to, control1: control1, control2: control2)
+        let base = ConnectionView(from: from, to: to, detourY: detourY).path(in: rect)
         return base.strokedPath(StrokeStyle(lineWidth: 20, lineCap: .round))
     }
 }

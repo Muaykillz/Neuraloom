@@ -13,6 +13,12 @@ struct TrainingUpdate: Sendable {
     let epoch: Int
     let loss: Double
     let weightSync: [UUID: (value: Double, gradient: Double)]
+    let sampleIndex: Int?  // original row index in preset.rows (nil for epoch/async)
+}
+
+enum StepGranularity: String, CaseIterable {
+    case sample = "Sample"
+    case epoch  = "Epoch"
 }
 
 // MARK: - TrainingService
@@ -23,17 +29,14 @@ final class TrainingService {
     struct CompiledNetwork: Sendable {
         var model: ExecutionModel
         let connToWeightIdx: [UUID: Int]
+        let trainingData: [([Double], [Double])]
     }
 
     private var trainingTask: Task<Void, Never>?
     private var steppingNetwork: CompiledNetwork?
-    private var sampleQueue: [([Double], [Double])] = []
+    private var sampleQueue: [(index: Int, input: [Double], output: [Double])] = []
     private var sampleIndex: Int = 0
     private var stepEpoch: Int = 0
-
-    private let xorData: [([Double], [Double])] = [
-        ([0, 0], [0]), ([0, 1], [1]), ([1, 0], [1]), ([1, 1], [0])
-    ]
 
     // MARK: - Build
 
@@ -46,8 +49,10 @@ final class TrainingService {
             neuronMap[nodeVM.id] = neuron
         }
 
-        graph.setInputs(nodes.filter(\.isInput).compactMap { neuronMap[$0.id] })
-        graph.setOutputs(nodes.filter(\.isOutput).compactMap { neuronMap[$0.id] })
+        let inputNeurons = nodes.filter(\.isInput)
+        let outputNeurons = nodes.filter(\.isOutput)
+        graph.setInputs(inputNeurons.compactMap { neuronMap[$0.id] })
+        graph.setOutputs(outputNeurons.compactMap { neuronMap[$0.id] })
         graph.setBiases(nodes.filter(\.isBias).compactMap { neuronMap[$0.id] })
 
         var connWeightId: [UUID: UUID] = [:]
@@ -70,7 +75,79 @@ final class TrainingService {
             }
         }
 
-        return CompiledNetwork(model: model, connToWeightIdx: connToWeightIdx)
+        // Resolve training data from dataset node
+        let trainingData = resolveTrainingData(
+            nodes: nodes, connections: connections,
+            inputNeuronIds: inputNeurons.map(\.id),
+            outputNeuronIds: outputNeurons.map(\.id)
+        )
+
+        return CompiledNetwork(model: model, connToWeightIdx: connToWeightIdx, trainingData: trainingData)
+    }
+
+    private func resolveTrainingData(
+        nodes: [NodeViewModel],
+        connections: [ConnectionViewModel],
+        inputNeuronIds: [UUID],
+        outputNeuronIds: [UUID]
+    ) -> [([Double], [Double])] {
+        // 1. Find the Loss Node with its config
+        guard let lossNode = nodes.first(where: { $0.type == .loss }),
+              let lossConfig = lossNode.lossConfig else {
+            // Fallback: No loss node or no config — use default XOR
+            return [([0,0], [0]), ([0,1], [1]), ([1,0], [1]), ([1,1], [0])]
+        }
+
+        // 2. Find Dataset node
+        guard let dsNode = nodes.first(where: { $0.type == .dataset }),
+              let config = dsNode.datasetConfig else {
+            return []
+        }
+        let portIds = config.columnPortIds
+        let rows = config.preset.rows
+
+        // 3. Map Input Neurons to Dataset Ports (X1, X2 -> Input Neurons)
+        var inputToColumn: [UUID: Int] = [:]
+        for conn in connections {
+            if let ci = portIds.firstIndex(of: conn.sourceNodeId) {
+                if inputNeuronIds.contains(conn.targetNodeId) {
+                    inputToColumn[conn.targetNodeId] = ci
+                }
+            }
+        }
+
+        // 4. Map Output Neurons via Loss Ports
+        // Find which neuron connects to the ŷ (prediction) port
+        let neuronsConnectingToPred = connections
+            .filter { $0.targetNodeId == lossConfig.predPortId }
+            .map { $0.sourceNodeId }
+
+        // Find which dataset port connects to the y (target) port
+        let portsConnectingToTrue = connections
+            .filter { $0.targetNodeId == lossConfig.truePortId && portIds.contains($0.sourceNodeId) }
+            .map { $0.sourceNodeId }
+
+        var outputToTargetColumn: [UUID: Int] = [:]
+        for (index, neuronId) in neuronsConnectingToPred.enumerated() {
+            if index < portsConnectingToTrue.count {
+                if let ci = portIds.firstIndex(of: portsConnectingToTrue[index]) {
+                    outputToTargetColumn[neuronId] = ci
+                }
+            }
+        }
+
+        // 5. Build the final training data
+        return rows.map { row in
+            let inputs: [Double] = inputNeuronIds.map { nid in
+                if let ci = inputToColumn[nid], ci < row.count { return row[ci] }
+                return 0.0
+            }
+            let outputs: [Double] = outputNeuronIds.map { nid in
+                if let ci = outputToTargetColumn[nid], ci < row.count { return row[ci] }
+                return 0.0
+            }
+            return (inputs, outputs)
+        }
     }
 
     // MARK: - Async Training
@@ -78,6 +155,7 @@ final class TrainingService {
     func startTraining(
         compiled: CompiledNetwork,
         config: TrainingConfig,
+        startEpoch: Int = 0,
         onUpdate: @escaping @Sendable (TrainingUpdate) async -> Void,
         onComplete: @escaping @Sendable () async -> Void
     ) {
@@ -85,14 +163,19 @@ final class TrainingService {
         let lr = config.learningRate
         let lf = config.lossFunction
         let batchSize = config.batchSize
-        let data = xorData
+        let data = compiled.trainingData
         let connToWeightIdx = compiled.connToWeightIdx
 
         trainingTask = Task.detached(priority: .userInitiated) {
             var m = compiled.model
             let updateInterval = max(1, epochs / 100)
 
-            for epoch in 1...epochs {
+            if startEpoch >= epochs {
+                await onComplete()
+                return
+            }
+
+            for epoch in (startEpoch + 1)...epochs {
                 if Task.isCancelled { break }
                 let loss = ExecutionEngine.trainOneEpoch(
                     model: &m, data: data, learningRate: lr,
@@ -103,7 +186,7 @@ final class TrainingService {
                     for (connId, idx) in connToWeightIdx {
                         sync[connId] = (m.weightValues[idx], m.weightGradients[idx])
                     }
-                    await onUpdate(TrainingUpdate(epoch: epoch, loss: loss, weightSync: sync))
+                    await onUpdate(TrainingUpdate(epoch: epoch, loss: loss, weightSync: sync, sampleIndex: nil))
                 }
             }
 
@@ -144,14 +227,14 @@ final class TrainingService {
         guard var net = steppingNetwork else { return }
 
         let loss = ExecutionEngine.trainOneEpoch(
-            model: &net.model, data: xorData,
+            model: &net.model, data: net.trainingData,
             learningRate: config.learningRate,
             lossFunction: config.lossFunction,
             batchSize: config.batchSize
         )
         steppingNetwork = net
         stepEpoch += 1
-        onUpdate(TrainingUpdate(epoch: stepEpoch, loss: loss, weightSync: syncWeightsDict(from: net)))
+        onUpdate(TrainingUpdate(epoch: stepEpoch, loss: loss, weightSync: syncWeightsDict(from: net), sampleIndex: nil))
     }
 
     private func stepOneSample(
@@ -163,27 +246,32 @@ final class TrainingService {
         if steppingNetwork == nil {
             guard let compiled = try? buildNetwork(nodes: nodes, connections: connections) else { return }
             steppingNetwork = compiled
-            sampleQueue = xorData.shuffled()
+            sampleQueue = compiled.trainingData.enumerated().map { (i, pair) in
+                (index: i, input: pair.0, output: pair.1)
+            }
             sampleIndex = 0
         }
         guard var net = steppingNetwork else { return }
 
         if sampleIndex >= sampleQueue.count {
-            sampleQueue = xorData.shuffled()
+            sampleQueue = net.trainingData.enumerated().map { (i, pair) in
+                (index: i, input: pair.0, output: pair.1)
+            }
             sampleIndex = 0
             stepEpoch += 1
         }
-        let sample = [sampleQueue[sampleIndex]]
+        let sample = sampleQueue[sampleIndex]
+        let trainData = [(sample.input, sample.output)]
         sampleIndex += 1
 
         let loss = ExecutionEngine.trainOneEpoch(
-            model: &net.model, data: sample,
+            model: &net.model, data: trainData,
             learningRate: config.learningRate,
             lossFunction: config.lossFunction,
             batchSize: 1
         )
         steppingNetwork = net
-        onUpdate(TrainingUpdate(epoch: stepEpoch, loss: loss, weightSync: syncWeightsDict(from: net)))
+        onUpdate(TrainingUpdate(epoch: stepEpoch, loss: loss, weightSync: syncWeightsDict(from: net), sampleIndex: sample.index))
     }
 
     // MARK: - Reset & Invalidate

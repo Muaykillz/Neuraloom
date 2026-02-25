@@ -41,23 +41,34 @@ struct PlaygroundView: View {
                         ForEach(canvasViewModel.drawableConnections) { conn in
                             let isSelected = canvasViewModel.selectedConnectionId == conn.id
                             let absW = abs(conn.value)
-                            let weightColor: Color = absW < 0.05
-                                ? Color.primary.opacity(0.35)
-                                : Color.orange.opacity(0.3 + min(absW / 3.0, 1.0) * 0.7)
+                            let lineColor: Color = conn.isUtilityLink
+                                ? (isSelected ? Color.blue : Color.blue.opacity(0.3))
+                                : (isSelected ? Color.orange : (absW < 0.05
+                                    ? Color.primary.opacity(0.35)
+                                    : Color.orange.opacity(0.3 + min(absW / 3.0, 1.0) * 0.7)))
+                            let lineStyle = conn.isUtilityLink
+                                ? StrokeStyle(lineWidth: isSelected ? 4 : 3, dash: [8, 5])
+                                : StrokeStyle(lineWidth: isSelected ? 5 : 4)
                             ZStack {
                                 // Visible line
-                                ConnectionView(from: conn.from, to: conn.to)
-                                    .stroke(isSelected ? Color.orange : weightColor, lineWidth: isSelected ? 5 : 4)
+                                ConnectionView(from: conn.from, to: conn.to, detourY: conn.detourY)
+                                    .stroke(lineColor, style: lineStyle)
                                     .animation(.easeInOut(duration: 0.4), value: conn.value)
 
-                                // Hit area — strokedPath fill covers full curve including vertical lines
-                                ConnectionHitArea(from: conn.from, to: conn.to)
+                                // Hit area for tap interaction
+                                ConnectionHitArea(from: conn.from, to: conn.to, detourY: conn.detourY)
                                     .fill(Color.white.opacity(0.001))
                                     .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
                                         .onEnded { value in
-                                            let newId = canvasViewModel.selectedConnectionId == conn.id ? nil : conn.id
-                                            canvasViewModel.selectedConnectionId = newId
-                                            canvasViewModel.connectionTapGlobalLocation = newId != nil ? value.location : nil
+                                            if conn.isUtilityLink {
+                                                let newId = canvasViewModel.selectedConnectionId == conn.id ? nil : conn.id
+                                                canvasViewModel.selectedConnectionId = newId
+                                                canvasViewModel.connectionTapGlobalLocation = nil
+                                            } else {
+                                                let newId = canvasViewModel.selectedConnectionId == conn.id ? nil : conn.id
+                                                canvasViewModel.selectedConnectionId = newId
+                                                canvasViewModel.connectionTapGlobalLocation = newId != nil ? value.location : nil
+                                            }
                                         }
                                     )
                             }
@@ -71,6 +82,25 @@ struct PlaygroundView: View {
                         
                         ForEach(canvasViewModel.nodes) { node in
                             CanvasNodeView(viewModel: canvasViewModel, node: node)
+                        }
+
+                        // Delete button for selected utility connection
+                        if let connId = canvasViewModel.selectedConnectionId,
+                           let conn = canvasViewModel.drawableConnections.first(where: { $0.id == connId }),
+                           conn.isUtilityLink {
+                            let mid = CGPoint(x: (conn.from.x + conn.to.x) / 2,
+                                              y: conn.detourY ?? (conn.from.y + conn.to.y) / 2)
+                            Button {
+                                canvasViewModel.selectedConnectionId = nil
+                                canvasViewModel.deleteConnection(id: connId)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 22))
+                                    .foregroundStyle(.white, .red)
+                                    .shadow(radius: 2)
+                            }
+                            .buttonStyle(.plain)
+                            .position(mid)
                         }
                     }
                     .scaleEffect(canvasViewModel.scale, anchor: .topLeading)
@@ -172,9 +202,14 @@ struct CanvasNodeView: View {
     var node: NodeViewModel
 
     var body: some View {
-        if node.type == .visualization {
+        switch node.type {
+        case .visualization:
             VisualizationNodeView(viewModel: viewModel, node: node)
-        } else {
+        case .dataset:
+            DatasetNodeView(viewModel: viewModel, node: node)
+        case .loss:
+            LossNodeView(viewModel: viewModel, node: node)
+        default:
             NeuronNodeView(viewModel: viewModel, node: node)
         }
     }
@@ -197,6 +232,11 @@ struct ComponentItemView: View {
                     .fill(Color.blue)
                     .frame(width: 40, height: 40)
                     .overlay(Text("Data").font(.caption2).foregroundColor(.white))
+            case .loss:
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.red)
+                    .frame(width: 40, height: 40)
+                    .overlay(Image(systemName: "target").foregroundColor(.white))
             case .visualization:
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.purple)

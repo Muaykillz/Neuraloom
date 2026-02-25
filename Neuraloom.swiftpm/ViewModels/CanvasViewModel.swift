@@ -25,8 +25,11 @@ class CanvasViewModel: ObservableObject {
     @Published var learningRate: Double = 0.1
     @Published var selectedLossFunction: LossFunction = .mse
     @Published var currentLoss: Double? = nil
-    @Published var lossHistory: [Double] = []
+    @Published var lossHistory: [Double] = []      // always epoch-scale
     @Published var stepGranularity: StepGranularity = .epoch
+    @Published var activeSampleIndex: Int? = nil
+    @Published var stepCount = 0
+    private var sampleLossAccumulator: [Double] = []
 
     private let trainingService = TrainingService()
 
@@ -43,7 +46,13 @@ class CanvasViewModel: ObservableObject {
     func addNode(type: NodeViewModel.NodeType, at screenPoint: CGPoint) {
         let initialPos = convertToCanvasSpace(screenPoint)
         let finalPos = findNonOverlappingPosition(near: initialPos)
-        let newNode = NodeViewModel(id: UUID(), position: finalPos, type: type)
+        var newNode = NodeViewModel(id: UUID(), position: finalPos, type: type)
+        if type == .dataset {
+            newNode.datasetConfig = DatasetNodeConfig()
+        }
+        if type == .loss {
+            newNode.lossConfig = LossNodeConfig()
+        }
         withAnimation(.spring()) {
             nodes.append(newNode)
         }
@@ -82,11 +91,20 @@ class CanvasViewModel: ObservableObject {
     }
     
     func deleteNode(id: UUID) {
+        // Collect synthetic port IDs for dataset and loss nodes
+        let portIds: Set<UUID> = {
+            guard let node = nodes.first(where: { $0.id == id }) else { return [] }
+            var ids = Set<UUID>()
+            if let dsConfig = node.datasetConfig { ids.formUnion(dsConfig.columnPortIds) }
+            if let lConfig = node.lossConfig { ids.formUnion(lConfig.inputPortIds) }
+            return ids
+        }()
         withAnimation(.spring()) {
-            // Remove the node
             nodes.removeAll { $0.id == id }
-            // Remove all associated connections
-            connections.removeAll { $0.sourceNodeId == id || $0.targetNodeId == id }
+            connections.removeAll { conn in
+                conn.sourceNodeId == id || conn.targetNodeId == id ||
+                portIds.contains(conn.sourceNodeId) || portIds.contains(conn.targetNodeId)
+            }
         }
     }
     
@@ -125,13 +143,36 @@ class CanvasViewModel: ObservableObject {
             triggerToast("Bias nodes cannot receive connections.")
             return
         }
-        if wouldCreateCycle(from: sourceId, to: targetId) {
-            triggerToast("Cycle Detected: Feedforward networks must be acyclic.")
-            return
+        // Dataset port connections don't need cycle check (always source-only)
+        let isDatasetPort = columnPortPosition(portId: sourceId) != nil
+        // Loss input port connections skip cycle check (utility links)
+        let isLossPort = lossPortPosition(portId: targetId) != nil
+        if !isDatasetPort && !isLossPort {
+            if let target = nodes.first(where: { $0.id == targetId }), target.type == .dataset {
+                triggerToast("Dataset nodes cannot receive connections.")
+                return
+            }
+            if wouldCreateCycle(from: sourceId, to: targetId) {
+                triggerToast("Cycle Detected: Feedforward networks must be acyclic.")
+                return
+            }
         }
         if !connections.contains(where: { $0.sourceNodeId == sourceId && $0.targetNodeId == targetId }) {
             connections.append(ConnectionViewModel(sourceNodeId: sourceId, targetNodeId: targetId))
         }
+    }
+
+    func updateDatasetPreset(nodeId: UUID, preset: DatasetPreset) {
+        guard let idx = nodes.firstIndex(where: { $0.id == nodeId }) else { return }
+        let oldPortIds = Set(nodes[idx].datasetConfig?.columnPortIds ?? [])
+        nodes[idx].datasetConfig?.updatePreset(preset)
+        // Remove connections from ports that no longer exist
+        let newPortIds = Set(nodes[idx].datasetConfig?.columnPortIds ?? [])
+        let removedPorts = oldPortIds.subtracting(newPortIds)
+        if !removedPorts.isEmpty {
+            connections.removeAll { removedPorts.contains($0.sourceNodeId) }
+        }
+        trainingService.invalidateStepping()
     }
     
     // MARK: - MVVM Helpers
@@ -141,28 +182,152 @@ class CanvasViewModel: ObservableObject {
         let from: CGPoint
         let to: CGPoint
         let value: Double
+        let isUtilityLink: Bool   // dashed style for non-neural connections
+        var detourY: CGFloat?     // when set, bezier control points are pushed to this Y
     }
 
     var drawableConnections: [DrawableConnection] {
-        connections.compactMap { conn in
-            guard let fromNode = nodes.first(where: { $0.id == conn.sourceNodeId }),
-                  let toNode = nodes.first(where: { $0.id == conn.targetNodeId }) else { return nil }
-            return DrawableConnection(id: conn.id, from: fromNode.position, to: toNode.position, value: conn.value)
+        let bbox = neuronBoundingBox
+        return connections.compactMap { conn in
+            // Resolve target: loss input port or regular node
+            let toPoint: CGPoint
+            if let portPos = lossPortPosition(portId: conn.targetNodeId) {
+                toPoint = portPos
+            } else if let toNode = nodes.first(where: { $0.id == conn.targetNodeId }) {
+                toPoint = inputEdge(of: toNode)
+            } else {
+                return nil
+            }
+
+            // Resolve source: dataset column port or regular node
+            if let portPos = columnPortPosition(portId: conn.sourceNodeId) {
+                let dy = computeDetourY(from: portPos, to: toPoint, bbox: bbox)
+                return DrawableConnection(id: conn.id, from: portPos, to: toPoint, value: conn.value, isUtilityLink: true, detourY: dy)
+            }
+
+            guard let fromNode = nodes.first(where: { $0.id == conn.sourceNodeId }) else { return nil }
+            let targetIsLossPort = lossPortPosition(portId: conn.targetNodeId) != nil
+            let targetNode = nodes.first(where: { $0.id == conn.targetNodeId })
+            let isUtility = fromNode.type != .neuron || targetNode?.type != .neuron || targetIsLossPort
+            let fromPt = outputEdge(of: fromNode)
+            let dy = isUtility ? computeDetourY(from: fromPt, to: toPoint, bbox: bbox) : nil
+            return DrawableConnection(id: conn.id, from: fromPt, to: toPoint, value: conn.value, isUtilityLink: isUtility, detourY: dy)
         }
+    }
+
+    // MARK: - Detour Routing
+
+    /// Bounding box of all neuron nodes (captures the neural network area including weight lines)
+    private var neuronBoundingBox: CGRect? {
+        let neurons = nodes.filter { $0.type == .neuron }
+        guard !neurons.isEmpty else { return nil }
+        let xs = neurons.map(\.position.x)
+        let ys = neurons.map(\.position.y)
+        let padding: CGFloat = 40
+        return CGRect(
+            x: xs.min()! - padding, y: ys.min()! - padding,
+            width: xs.max()! - xs.min()! + padding * 2,
+            height: ys.max()! - ys.min()! + padding * 2
+        )
+    }
+
+    /// If a utility link's direct path would cut through the neuron network bbox,
+    /// return a Y value to push bezier control points to (smooth arc below network).
+    private func computeDetourY(from src: CGPoint, to dst: CGPoint, bbox: CGRect?) -> CGFloat? {
+        guard let bbox else { return nil }
+
+        // Only detour if the line spans across the bbox horizontally
+        let minX = min(src.x, dst.x)
+        let maxX = max(src.x, dst.x)
+        guard minX < bbox.midX && maxX > bbox.midX else { return nil }
+
+        // Check if the direct midpoint would fall inside the bbox vertically
+        let midY = (src.y + dst.y) / 2
+        guard midY > bbox.minY && midY < bbox.maxY else { return nil }
+
+        return bbox.maxY + 60
+    }
+
+    /// Output handle position (right edge) per node type
+    private func outputEdge(of node: NodeViewModel) -> CGPoint {
+        let p = node.position
+        switch node.type {
+        case .neuron:        return CGPoint(x: p.x + 25, y: p.y)   // circle r=25
+        case .loss:          return CGPoint(x: p.x + 64, y: p.y)   // card 120/2 + 4
+        case .visualization: return CGPoint(x: p.x + 109, y: p.y)  // card 210/2 + 4
+        default:             return p
+        }
+    }
+
+    /// Input edge position (left edge) per node type
+    private func inputEdge(of node: NodeViewModel) -> CGPoint {
+        let p = node.position
+        switch node.type {
+        case .neuron:        return p                                // lines arrive at center (circle is small)
+        case .loss:          return CGPoint(x: p.x - 64, y: p.y)   // card 120/2 + 4
+        case .visualization: return CGPoint(x: p.x - 109, y: p.y)  // card 210/2 + 4
+        default:             return p
+        }
+    }
+
+    func lossPortPosition(portId: UUID) -> CGPoint? {
+        for node in nodes where node.type == .loss {
+            guard let config = node.lossConfig else { continue }
+            if let pi = config.inputPortIds.firstIndex(of: portId) {
+                let totalH = CGFloat(config.inputPortIds.count - 1) * DatasetNodeLayout.portSpacing
+                let startY = node.position.y - totalH / 2
+                return CGPoint(
+                    x: node.position.x - 60 - DatasetNodeLayout.portRadius - 2,
+                    y: startY + CGFloat(pi) * DatasetNodeLayout.portSpacing
+                )
+            }
+        }
+        return nil
+    }
+
+    func columnPortPosition(portId: UUID) -> CGPoint? {
+        for node in nodes where node.type == .dataset {
+            guard let config = node.datasetConfig else { continue }
+            if let ci = config.columnPortIds.firstIndex(of: portId) {
+                let h = DatasetNodeLayout.height(for: config)
+                return DatasetNodeLayout.portPosition(
+                    nodePosition: node.position,
+                    columnIndex: ci,
+                    totalColumns: config.columnPortIds.count,
+                    nodeHeight: h
+                )
+            }
+        }
+        return nil
     }
     
     var temporaryWiringLine: (from: CGPoint, to: CGPoint)? {
         guard let sourceId = activeWiringSource,
-              let sourceNode = nodes.first(where: { $0.id == sourceId }),
               let targetPos = wiringTargetPosition else { return nil }
-        
-        let fromPoint = CGPoint(x: sourceNode.position.x + 25, y: sourceNode.position.y)
-        
+
+        // Resolve source: node output edge or dataset column port
+        let fromPoint: CGPoint
+        if let sourceNode = nodes.first(where: { $0.id == sourceId }) {
+            fromPoint = outputEdge(of: sourceNode)
+        } else if let portPos = columnPortPosition(portId: sourceId) {
+            fromPoint = portPos
+        } else {
+            return nil
+        }
+
         if let hoveredId = hoveredNodeId,
            let hoveredNode = nodes.first(where: { $0.id == hoveredId }) {
-            return (fromPoint, hoveredNode.position)
+            // Loss node: snap preview to nearest input port
+            if hoveredNode.type == .loss, let config = hoveredNode.lossConfig {
+                let canvasPt = convertToCanvasSpace(targetPos)
+                let portId = closestLossPort(config: config, nodePosition: hoveredNode.position, to: canvasPt)
+                if let portPos = lossPortPosition(portId: portId) {
+                    return (fromPoint, portPos)
+                }
+            }
+            return (fromPoint, inputEdge(of: hoveredNode))
         }
-        
+
         return (fromPoint, convertToCanvasSpace(targetPos))
     }
     
@@ -226,11 +391,32 @@ class CanvasViewModel: ObservableObject {
     
     func endWiring(sourceId: UUID, location: CGPoint) {
         if let targetNode = findNode(at: location) {
-            addConnection(from: sourceId, to: targetNode.id)
+            // If target is a loss node with ports, snap to nearest input port
+            if targetNode.type == .loss, let config = targetNode.lossConfig {
+                let canvasPt = convertToCanvasSpace(location)
+                let targetId = closestLossPort(config: config, nodePosition: targetNode.position, to: canvasPt)
+                addConnection(from: sourceId, to: targetId)
+            } else {
+                addConnection(from: sourceId, to: targetNode.id)
+            }
         }
         activeWiringSource = nil
         wiringTargetPosition = nil
         hoveredNodeId = nil
+    }
+
+    /// Find which loss input port is closest to a canvas point
+    private func closestLossPort(config: LossNodeConfig, nodePosition: CGPoint, to point: CGPoint) -> UUID {
+        let totalH = CGFloat(config.inputPortIds.count - 1) * DatasetNodeLayout.portSpacing
+        let startY = nodePosition.y - totalH / 2
+        var bestId = config.inputPortIds[0]
+        var bestDist = CGFloat.infinity
+        for (pi, portId) in config.inputPortIds.enumerated() {
+            let portY = startY + CGFloat(pi) * DatasetNodeLayout.portSpacing
+            let dist = abs(point.y - portY)
+            if dist < bestDist { bestDist = dist; bestId = portId }
+        }
+        return bestId
     }
     
     // MARK: - Utilities
@@ -245,8 +431,30 @@ class CanvasViewModel: ObservableObject {
     func findNode(at screenPoint: CGPoint) -> NodeViewModel? {
         let canvasPoint = convertToCanvasSpace(screenPoint)
         return nodes.first { node in
-            let dist = sqrt(pow(node.position.x - canvasPoint.x, 2) + pow(node.position.y - canvasPoint.y, 2))
-            return dist < 30
+            let hitRect = nodeHitRect(for: node)
+            return hitRect.contains(canvasPoint)
+        }
+    }
+
+    /// Generous hit rectangle per node type — includes ports area for easy wiring
+    private func nodeHitRect(for node: NodeViewModel) -> CGRect {
+        let p = node.position
+        switch node.type {
+        case .neuron:
+            // Circle r=25 + port handles
+            return CGRect(x: p.x - 35, y: p.y - 35, width: 70, height: 70)
+        case .loss:
+            // Card 120×72 + input ports extending left (~40pt) + output port right
+            return CGRect(x: p.x - 105, y: p.y - 45, width: 190, height: 90)
+        case .visualization:
+            // Card 210×148 + input port left
+            return CGRect(x: p.x - 120, y: p.y - 80, width: 240, height: 160)
+        case .dataset:
+            let h = node.datasetConfig.map { DatasetNodeLayout.height(for: $0) } ?? 120
+            return CGRect(x: p.x - DatasetNodeLayout.width / 2 - 10, y: p.y - h / 2 - 10,
+                          width: DatasetNodeLayout.width + 50, height: h + 20)
+        case .annotation:
+            return CGRect(x: p.x - 40, y: p.y - 40, width: 80, height: 80)
         }
     }
     
@@ -274,30 +482,74 @@ class CanvasViewModel: ObservableObject {
     
     func setupMVPScenario() {
         let i1Id = UUID(); let i2Id = UUID(); let h1Id = UUID(); let h2Id = UUID(); let o1Id = UUID()
+        let dsId = UUID(); let lossId = UUID(); let vizId = UUID()
+        let dsConfig = DatasetNodeConfig(preset: .xor)
+        let lossConfig = LossNodeConfig()
+
         nodes = [
             NodeViewModel(id: i1Id, position: CGPoint(x: 100, y: 200), type: .neuron, activation: .linear, role: .input),
             NodeViewModel(id: i2Id, position: CGPoint(x: 100, y: 400), type: .neuron, activation: .linear, role: .input),
             NodeViewModel(id: h1Id, position: CGPoint(x: 300, y: 200), type: .neuron, activation: .relu),
             NodeViewModel(id: h2Id, position: CGPoint(x: 300, y: 400), type: .neuron, activation: .relu),
-            NodeViewModel(id: o1Id, position: CGPoint(x: 500, y: 300), type: .neuron, activation: .sigmoid, role: .output)
+            NodeViewModel(id: o1Id, position: CGPoint(x: 500, y: 300), type: .neuron, activation: .sigmoid, role: .output),
+            {
+                var n = NodeViewModel(id: dsId, position: CGPoint(x: -150, y: 300), type: .dataset)
+                n.datasetConfig = dsConfig
+                return n
+            }(),
+            {
+                var n = NodeViewModel(id: lossId, position: CGPoint(x: 700, y: 300), type: .loss)
+                n.lossConfig = lossConfig
+                return n
+            }(),
+            NodeViewModel(id: vizId, position: CGPoint(x: 950, y: 300), type: .visualization)
         ]
+
+        // Internal Network connections
         addConnection(from: i1Id, to: h1Id); addConnection(from: i1Id, to: h2Id)
         addConnection(from: i2Id, to: h1Id); addConnection(from: i2Id, to: h2Id)
         addConnection(from: h1Id, to: o1Id); addConnection(from: h2Id, to: o1Id)
+
+        // Dataset X1, X2 -> Inputs
+        addConnection(from: dsConfig.columnPortIds[0], to: i1Id)
+        addConnection(from: dsConfig.columnPortIds[1], to: i2Id)
+
+        // Output Neuron -> Loss ŷ (Prediction port)
+        addConnection(from: o1Id, to: lossConfig.predPortId)
+
+        // Dataset Y -> Loss y (Target port)
+        addConnection(from: dsConfig.columnPortIds[2], to: lossConfig.truePortId)
+
+        // Loss -> Visualization
+        addConnection(from: lossId, to: vizId)
     }
 
     // MARK: - Training
 
     func startTraining() {
         guard !isTraining else { return }
-        let compiled: TrainingService.CompiledNetwork
-        do { compiled = try trainingService.buildNetwork(nodes: nodes, connections: connections) }
-        catch { triggerToast(error.localizedDescription); return }
 
         isTraining = true
-        currentEpoch = 0
-        lossHistory = []
-        currentLoss = nil
+        
+        // Only reset if we are at the very beginning
+        if currentEpoch == 0 && stepCount == 0 {
+            lossHistory = []
+            sampleLossAccumulator = []
+            currentLoss = nil
+        }
+        activeSampleIndex = nil
+
+        if stepGranularity == .epoch {
+            startEpochTraining()
+        } else {
+            startSampleTraining()
+        }
+    }
+
+    private func startEpochTraining() {
+        let compiled: TrainingService.CompiledNetwork
+        do { compiled = try trainingService.buildNetwork(nodes: nodes, connections: connections) }
+        catch { triggerToast(error.localizedDescription); isTraining = false; return }
 
         let config = TrainingConfig(
             learningRate: learningRate,
@@ -305,7 +557,8 @@ class CanvasViewModel: ObservableObject {
             totalEpochs: totalEpochs,
             batchSize: 4
         )
-        trainingService.startTraining(compiled: compiled, config: config) { [weak self] update in
+        // Pass currentEpoch as the starting point
+        trainingService.startTraining(compiled: compiled, config: config, startEpoch: currentEpoch) { [weak self] update in
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.currentEpoch = update.epoch
@@ -318,13 +571,42 @@ class CanvasViewModel: ObservableObject {
         }
     }
 
+    private var sampleTrainingTimer: Timer?
+
+    private func startSampleTraining() {
+        let target = totalEpochs  // in sample mode, the input = total steps
+        sampleTrainingTimer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isTraining else {
+                    self?.sampleTrainingTimer?.invalidate()
+                    self?.sampleTrainingTimer = nil
+                    return
+                }
+                if self.stepCount >= target {
+                    self.sampleTrainingTimer?.invalidate()
+                    self.sampleTrainingTimer = nil
+                    self.isTraining = false
+                    return
+                }
+                self.performOneStep()
+            }
+        }
+    }
+
     func stopTraining() {
         trainingService.stopTraining()
+        sampleTrainingTimer?.invalidate()
+        sampleTrainingTimer = nil
         isTraining = false
+        activeSampleIndex = nil
     }
 
     func stepTraining() {
         guard !isTraining else { return }
+        performOneStep()
+    }
+
+    private func performOneStep() {
         let config = TrainingConfig(
             learningRate: learningRate,
             lossFunction: selectedLossFunction,
@@ -338,19 +620,37 @@ class CanvasViewModel: ObservableObject {
             config: config
         ) { [weak self] update in
             guard let self else { return }
+            let prevEpoch = self.currentEpoch
             self.currentEpoch = update.epoch
             self.currentLoss = update.loss
-            self.lossHistory.append(update.loss)
+            self.stepCount += 1
+
+            if self.stepGranularity == .epoch {
+                self.lossHistory.append(update.loss)
+            } else {
+                self.sampleLossAccumulator.append(update.loss)
+                if update.epoch > prevEpoch && !self.sampleLossAccumulator.isEmpty {
+                    let avg = self.sampleLossAccumulator.reduce(0, +) / Double(self.sampleLossAccumulator.count)
+                    self.lossHistory.append(avg)
+                    self.sampleLossAccumulator = []
+                }
+            }
             self.applyWeightSync(update.weightSync)
+            self.activeSampleIndex = update.sampleIndex
         }
     }
 
     func resetTraining() {
         trainingService.resetTraining()
+        sampleTrainingTimer?.invalidate()
+        sampleTrainingTimer = nil
         isTraining = false
         lossHistory = []
+        sampleLossAccumulator = []
         currentEpoch = 0
+        stepCount = 0
         currentLoss = nil
+        activeSampleIndex = nil
         for i in connections.indices {
             connections[i].value = 0.0
             connections[i].gradient = 0.0
@@ -443,6 +743,7 @@ struct NodeViewModel: Identifiable {
     enum NodeType: String, CaseIterable {
         case neuron = "Neuron"
         case dataset = "Dataset"
+        case loss = "Loss"
         case visualization = "Viz"
         case annotation = "Note"
 
@@ -450,6 +751,7 @@ struct NodeViewModel: Identifiable {
             switch self {
             case .neuron: return "circle.grid.3x3.fill"
             case .dataset: return "tablecells.fill"
+            case .loss: return "target"
             case .visualization: return "chart.line.uptrend.xyaxis"
             case .annotation: return "note.text"
             }
@@ -460,6 +762,8 @@ struct NodeViewModel: Identifiable {
     var type: NodeType
     var activation: ActivationType = .relu
     var role: NodeRole = .hidden
+    var datasetConfig: DatasetNodeConfig?
+    var lossConfig: LossNodeConfig?
 
     var isInput: Bool { role == .input }
     var isOutput: Bool { role == .output }
@@ -474,7 +778,3 @@ struct ConnectionViewModel: Identifiable {
     var gradient: Double = 0.0
 }
 
-enum StepGranularity: String, CaseIterable {
-    case sample = "Sample"
-    case epoch  = "Epoch"
-}
