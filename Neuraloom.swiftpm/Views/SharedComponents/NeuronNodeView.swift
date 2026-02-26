@@ -5,8 +5,8 @@ struct NeuronNodeView: View {
     var node: NodeViewModel
     
     var isHovered: Bool { viewModel.hoveredNodeId == node.id }
-
     var isSelected: Bool { viewModel.selectedNodeId == node.id }
+    var isGlowing: Bool { viewModel.glowingNodeIds.contains(node.id) }
 
     private var roleLabel: String {
         switch node.role {
@@ -17,15 +17,28 @@ struct NeuronNodeView: View {
         }
     }
 
+    private var inspectFont: Font {
+        if viewModel.inspectMode, viewModel.nodeOutputs[node.id] != nil {
+            return Font.system(size: 11, weight: .bold, design: .monospaced)
+        }
+        return Font.system(.callout, design: .rounded).bold()
+    }
+
+    private var displayLabel: String {
+        if viewModel.inspectMode, let val = viewModel.nodeOutputs[node.id] {
+            return String(format: "%.2f", val)
+        }
+        return roleLabel
+    }
+
     var body: some View {
         ZStack {
             Circle()
                 .fill(Color.orange)
                 .frame(width: 50, height: 50)
                 .overlay(
-                    Text(roleLabel)
-                        .font(.system(.callout, design: .rounded))
-                        .fontWeight(.bold)
+                    Text(displayLabel)
+                        .font(inspectFont)
                         .foregroundColor(.white)
                 )
                 .overlay(
@@ -34,11 +47,12 @@ struct NeuronNodeView: View {
                         .frame(width: 50, height: 50)
                 )
                 .shadow(
-                    color: Color.orange.opacity(isHovered ? 0.4 : 0.25),
-                    radius: isHovered ? 12 : 6,
+                    color: Color.orange.opacity(isGlowing ? 0.8 : (isHovered ? 0.4 : 0.25)),
+                    radius: isGlowing ? 18 : (isHovered ? 12 : 6),
                     x: 0,
-                    y: isHovered ? 6 : 3
+                    y: isGlowing ? 0 : (isHovered ? 6 : 3)
                 )
+                .animation(.easeInOut(duration: 0.3), value: isGlowing)
                 .scaleEffect(isHovered ? 1.15 : 1.0)
                 .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHovered)
                 .gesture(
@@ -53,8 +67,9 @@ struct NeuronNodeView: View {
                 .popover(isPresented: Binding(
                     get: { viewModel.selectedNodeId == node.id },
                     set: { if !$0 { viewModel.selectedNodeId = nil } }
-                )) {
+                ), arrowEdge: .top) {
                     NodePopoverView(viewModel: viewModel, node: node)
+                        .onDisappear { viewModel.clearGlow() }
                 }
 
             // Connection Handle with better visibility
@@ -65,6 +80,8 @@ struct NeuronNodeView: View {
                     Circle()
                         .stroke(Color.orange, lineWidth: 2.5)
                 )
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
                 .offset(x: 24)
                 .gesture(
                     DragGesture(coordinateSpace: .named("canvas"))

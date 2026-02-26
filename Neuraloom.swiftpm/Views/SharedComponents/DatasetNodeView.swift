@@ -9,8 +9,8 @@ enum DatasetNodeLayout {
 
     static func height(for config: DatasetNodeConfig) -> CGFloat {
         let headerAndCols: CGFloat = 52 // header + column headers
-        let visibleRows = min(config.preset.rows.count, maxVisibleRows)
-        let overflow: CGFloat = config.preset.rows.count > maxVisibleRows ? 16 : 0
+        let visibleRows = min(config.rows.count, maxVisibleRows)
+        let overflow: CGFloat = config.rows.count > maxVisibleRows ? 16 : 0
         return headerAndCols + CGFloat(visibleRows) * rowHeight + overflow + 8
     }
 
@@ -29,6 +29,11 @@ struct DatasetNodeView: View {
     var node: NodeViewModel
 
     var isSelected: Bool { viewModel.selectedNodeId == node.id }
+    var isGlowing: Bool { viewModel.glowingNodeIds.contains(node.id) }
+
+    private var glowShadowColor: Color {
+        isGlowing ? Color.blue.opacity(0.8) : Color.black.opacity(0.08)
+    }
 
     private var config: DatasetNodeConfig {
         node.datasetConfig ?? DatasetNodeConfig()
@@ -59,7 +64,8 @@ struct DatasetNodeView: View {
                                 lineWidth: isSelected ? 2 : 1
                             )
                     )
-                    .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 3)
+                    .shadow(color: glowShadowColor, radius: isGlowing ? 18 : 8, x: 0, y: isGlowing ? 0 : 3)
+                    .animation(.easeInOut(duration: 0.3), value: isGlowing)
             )
 
             // Port column — overlay on right edge
@@ -134,7 +140,7 @@ struct DatasetNodeView: View {
     }
 
     private var dataRows: some View {
-        let visibleRows = Array(preset.rows.prefix(DatasetNodeLayout.maxVisibleRows))
+        let visibleRows = Array(config.rows.prefix(DatasetNodeLayout.maxVisibleRows))
         return ForEach(visibleRows.indices, id: \.self) { ri in
             dataRow(values: visibleRows[ri], rowIndex: ri)
         }
@@ -161,8 +167,8 @@ struct DatasetNodeView: View {
 
     @ViewBuilder
     private var overflowLabel: some View {
-        if preset.rows.count > DatasetNodeLayout.maxVisibleRows {
-            Text("+\(preset.rows.count - DatasetNodeLayout.maxVisibleRows) more")
+        if config.rows.count > DatasetNodeLayout.maxVisibleRows {
+            Text("+\(config.rows.count - DatasetNodeLayout.maxVisibleRows) more")
                 .font(.system(size: 9))
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 10)
@@ -186,6 +192,8 @@ struct DatasetNodeView: View {
                 .fill(Color.white)
                 .frame(width: pr * 2, height: pr * 2)
                 .overlay(Circle().stroke(Color.blue, lineWidth: 2.5))
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
                 .offset(x: cardW / 2 + pr + 2, y: yOff)
                 .gesture(
                     DragGesture(coordinateSpace: .named("canvas"))

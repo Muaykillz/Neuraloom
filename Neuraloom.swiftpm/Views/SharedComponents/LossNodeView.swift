@@ -10,6 +10,7 @@ struct LossNodeView: View {
     private let portSpacing: CGFloat = DatasetNodeLayout.portSpacing // 26
 
     var isSelected: Bool { viewModel.selectedNodeId == node.id }
+    var isGlowing: Bool { viewModel.glowingNodeIds.contains(node.id) }
     private var config: LossNodeConfig? { node.lossConfig }
 
     var body: some View {
@@ -22,8 +23,9 @@ struct LossNodeView: View {
                 .popover(isPresented: Binding(
                     get: { viewModel.selectedNodeId == node.id },
                     set: { if !$0 { viewModel.selectedNodeId = nil } }
-                )) {
+                ), arrowEdge: .top) {
                     NodePopoverView(viewModel: viewModel, node: node)
+                        .onDisappear { viewModel.clearGlow() }
                 }
 
             // Input ports (left edge)
@@ -48,6 +50,8 @@ struct LossNodeView: View {
                 .fill(Color.white)
                 .frame(width: 18, height: 18)
                 .overlay(Circle().stroke(Color.red, lineWidth: 2.5))
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
                 .offset(x: cardWidth / 2 + 4)
                 .gesture(
                     DragGesture(coordinateSpace: .named("canvas"))
@@ -86,14 +90,15 @@ struct LossNodeView: View {
                             lineWidth: isSelected ? 2 : 1
                         )
                 )
-                .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 3)
+                .shadow(color: glowShadowColor, radius: isGlowing ? 18 : 8, x: 0, y: isGlowing ? 0 : 3)
+                .animation(.easeInOut(duration: 0.3), value: isGlowing)
 
             VStack(spacing: 4) {
                 HStack(spacing: 5) {
                     Image(systemName: "target")
                         .font(.system(size: 10))
                         .foregroundStyle(.red)
-                    Text("Loss")
+                    Text(viewModel.selectedLossFunction == .mse ? "MSE" : "Cross-Entropy")
                         .font(.caption2.bold())
                         .foregroundStyle(.primary)
                     Spacer()
@@ -119,6 +124,10 @@ struct LossNodeView: View {
             }
             .frame(width: cardWidth, height: cardHeight)
         }
+    }
+
+    private var glowShadowColor: Color {
+        isGlowing ? Color.red.opacity(0.8) : Color.black.opacity(0.08)
     }
 
     private var lossColor: Color {
