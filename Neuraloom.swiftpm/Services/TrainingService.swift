@@ -9,11 +9,17 @@ struct TrainingConfig: Sendable {
     let batchSize: Int
 }
 
+enum StepPhase: String, Sendable {
+    case forward, backward
+}
+
 struct TrainingUpdate: Sendable {
     let epoch: Int
     let loss: Double
     let weightSync: [UUID: (value: Double, gradient: Double)]
+    let nodeSync: [UUID: (value: Double, gradient: Double)]
     let sampleIndex: Int?  // original row index in preset.rows (nil for epoch/async)
+    let phase: StepPhase?  // nil for epoch mode / async
 }
 
 enum StepGranularity: String, CaseIterable {
@@ -29,6 +35,7 @@ final class TrainingService {
     struct CompiledNetwork: Sendable {
         var model: ExecutionModel
         let connToWeightIdx: [UUID: Int]
+        let nodeVMIdToNodeIdx: [UUID: Int]   // NodeViewModel.id → index in model arrays
         let trainingData: [([Double], [Double])]
     }
 
@@ -37,6 +44,7 @@ final class TrainingService {
     private var sampleQueue: [(index: Int, input: [Double], output: [Double])] = []
     private var sampleIndex: Int = 0
     private var stepEpoch: Int = 0
+    private var currentPhase: StepPhase = .forward
 
     // MARK: - Build
 
@@ -59,8 +67,7 @@ final class TrainingService {
         for conn in connections {
             guard let from = neuronMap[conn.sourceNodeId],
                   let to = neuronMap[conn.targetNodeId] else { continue }
-            let weight = graph.connect(from: from, to: to)
-            if conn.value != 0.0 { weight.value = conn.value }
+            let weight = graph.connect(from: from, to: to, initialWeightValue: conn.value)
             connWeightId[conn.id] = weight.id
         }
 
@@ -75,6 +82,14 @@ final class TrainingService {
             }
         }
 
+        // Map NodeViewModel.id → index in model arrays (via Neuron.id)
+        var nodeVMIdToNodeIdx: [UUID: Int] = [:]
+        for (vmId, neuron) in neuronMap {
+            if let idx = model.nodeIDMap.firstIndex(of: neuron.id) {
+                nodeVMIdToNodeIdx[vmId] = idx
+            }
+        }
+
         // Resolve training data from dataset node
         let trainingData = resolveTrainingData(
             nodes: nodes, connections: connections,
@@ -82,7 +97,7 @@ final class TrainingService {
             outputNeuronIds: outputNeurons.map(\.id)
         )
 
-        return CompiledNetwork(model: model, connToWeightIdx: connToWeightIdx, trainingData: trainingData)
+        return CompiledNetwork(model: model, connToWeightIdx: connToWeightIdx, nodeVMIdToNodeIdx: nodeVMIdToNodeIdx, trainingData: trainingData)
     }
 
     private func resolveTrainingData(
@@ -104,7 +119,7 @@ final class TrainingService {
             return []
         }
         let portIds = config.columnPortIds
-        let rows = config.preset.rows
+        let rows = config.rows
 
         // 3. Map Input Neurons to Dataset Ports (X1, X2 -> Input Neurons)
         var inputToColumn: [UUID: Int] = [:]
@@ -165,6 +180,7 @@ final class TrainingService {
         let batchSize = config.batchSize
         let data = compiled.trainingData
         let connToWeightIdx = compiled.connToWeightIdx
+        let nodeVMMap = compiled.nodeVMIdToNodeIdx
 
         trainingTask = Task.detached(priority: .userInitiated) {
             var m = compiled.model
@@ -186,7 +202,11 @@ final class TrainingService {
                     for (connId, idx) in connToWeightIdx {
                         sync[connId] = (m.weightValues[idx], m.weightGradients[idx])
                     }
-                    await onUpdate(TrainingUpdate(epoch: epoch, loss: loss, weightSync: sync, sampleIndex: nil))
+                    var nSync: [UUID: (value: Double, gradient: Double)] = [:]
+                    for (vmId, idx) in nodeVMMap {
+                        nSync[vmId] = (m.nodeValues[idx], m.nodeGradients[idx])
+                    }
+                    await onUpdate(TrainingUpdate(epoch: epoch, loss: loss, weightSync: sync, nodeSync: nSync, sampleIndex: nil, phase: nil))
                 }
             }
 
@@ -234,7 +254,7 @@ final class TrainingService {
         )
         steppingNetwork = net
         stepEpoch += 1
-        onUpdate(TrainingUpdate(epoch: stepEpoch, loss: loss, weightSync: syncWeightsDict(from: net), sampleIndex: nil))
+        onUpdate(TrainingUpdate(epoch: stepEpoch, loss: loss, weightSync: syncWeightsDict(from: net), nodeSync: syncNodesDict(from: net), sampleIndex: nil, phase: nil))
     }
 
     private func stepOneSample(
@@ -250,28 +270,60 @@ final class TrainingService {
                 (index: i, input: pair.0, output: pair.1)
             }
             sampleIndex = 0
+            currentPhase = .forward
         }
         guard var net = steppingNetwork else { return }
 
-        if sampleIndex >= sampleQueue.count {
-            sampleQueue = net.trainingData.enumerated().map { (i, pair) in
-                (index: i, input: pair.0, output: pair.1)
+        // Advance sample queue when needed (at start of a new forward phase)
+        if currentPhase == .forward {
+            if sampleIndex >= sampleQueue.count {
+                sampleQueue = net.trainingData.enumerated().map { (i, pair) in
+                    (index: i, input: pair.0, output: pair.1)
+                }
+                sampleIndex = 0
+                stepEpoch += 1
             }
-            sampleIndex = 0
-            stepEpoch += 1
         }
-        let sample = sampleQueue[sampleIndex]
-        let trainData = [(sample.input, sample.output)]
-        sampleIndex += 1
 
-        let loss = ExecutionEngine.trainOneEpoch(
-            model: &net.model, data: trainData,
-            learningRate: config.learningRate,
-            lossFunction: config.lossFunction,
-            batchSize: 1
-        )
-        steppingNetwork = net
-        onUpdate(TrainingUpdate(epoch: stepEpoch, loss: loss, weightSync: syncWeightsDict(from: net), sampleIndex: sample.index))
+        let sample = sampleQueue[sampleIndex]
+
+        switch currentPhase {
+        case .forward:
+            // Forward only — show node outputs, weights unchanged
+            let loss = ExecutionEngine.forwardPass(
+                model: &net.model,
+                input: sample.input,
+                target: sample.output,
+                lossFunction: config.lossFunction
+            )
+            steppingNetwork = net
+            currentPhase = .backward
+            onUpdate(TrainingUpdate(
+                epoch: stepEpoch, loss: loss,
+                weightSync: syncWeightsDict(from: net),
+                nodeSync: syncNodesDict(from: net),
+                sampleIndex: sample.index, phase: .forward
+            ))
+
+        case .backward:
+            // Full backward + weight update
+            let loss = ExecutionEngine.backwardPass(
+                model: &net.model,
+                input: sample.input,
+                target: sample.output,
+                learningRate: config.learningRate,
+                lossFunction: config.lossFunction
+            )
+            steppingNetwork = net
+            currentPhase = .forward
+            sampleIndex += 1
+            onUpdate(TrainingUpdate(
+                epoch: stepEpoch, loss: loss,
+                weightSync: syncWeightsDict(from: net),
+                nodeSync: syncNodesDict(from: net),
+                sampleIndex: sample.index, phase: .backward
+            ))
+        }
     }
 
     // MARK: - Reset & Invalidate
@@ -283,10 +335,15 @@ final class TrainingService {
         sampleQueue = []
         sampleIndex = 0
         stepEpoch = 0
+        currentPhase = .forward
     }
 
     func invalidateStepping() {
         steppingNetwork = nil
+    }
+
+    func currentSteppingNetwork() -> CompiledNetwork? {
+        steppingNetwork
     }
 
     // MARK: - Private Helpers
@@ -295,6 +352,14 @@ final class TrainingService {
         var dict: [UUID: (value: Double, gradient: Double)] = [:]
         for (connId, idx) in net.connToWeightIdx {
             dict[connId] = (net.model.weightValues[idx], net.model.weightGradients[idx])
+        }
+        return dict
+    }
+
+    private func syncNodesDict(from net: CompiledNetwork) -> [UUID: (value: Double, gradient: Double)] {
+        var dict: [UUID: (value: Double, gradient: Double)] = [:]
+        for (vmId, idx) in net.nodeVMIdToNodeIdx {
+            dict[vmId] = (net.model.nodeValues[idx], net.model.nodeGradients[idx])
         }
         return dict
     }

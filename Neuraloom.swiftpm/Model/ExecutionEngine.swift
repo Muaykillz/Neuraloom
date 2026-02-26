@@ -166,8 +166,49 @@ class ExecutionEngine {
         }
     }
     
-    // MARK: - Core Math (Private)
-    private static func computeBackward(model: inout ExecutionModel, targetGradients: [Double]) {
+    // MARK: - Forward-only / Backward-only (for step-through)
+
+    /// Run forward pass only — returns loss but does NOT backpropagate or update weights.
+    static func forwardPass(
+        model: inout ExecutionModel,
+        input: [Double],
+        target: [Double],
+        lossFunction: LossFunction
+    ) -> Double {
+        predict(model: &model, input: input)
+        let out = model.outputNodeIndices.map { model.nodeValues[$0] }
+        return lossFunction.compute(predicted: out, target: target)
+    }
+
+    /// Run full forward + backward + weight update for a single sample.
+    static func backwardPass(
+        model: inout ExecutionModel,
+        input: [Double],
+        target: [Double],
+        learningRate: Double,
+        lossFunction: LossFunction
+    ) -> Double {
+        // Clear gradients
+        vDSP_vclrD(&model.weightGradients, 1, vDSP_Length(model.weightValues.count))
+        vDSP_vclrD(&model.nodeGradients,   1, vDSP_Length(model.nodeValues.count))
+        // Forward
+        predict(model: &model, input: input)
+        let out = model.outputNodeIndices.map { model.nodeValues[$0] }
+        let loss = lossFunction.compute(predicted: out, target: target)
+        // Backward
+        let outputGradients = lossFunction.gradient(predicted: out, target: target)
+        computeBackward(model: &model, targetGradients: outputGradients)
+        // Weight update
+        var step = -learningRate
+        let wc = vDSP_Length(model.weightValues.count)
+        if wc > 0 {
+            vDSP_vsmaD(model.weightGradients, 1, &step, model.weightValues, 1, &model.weightValues, 1, wc)
+        }
+        return loss
+    }
+
+    // MARK: - Core Math
+    static func computeBackward(model: inout ExecutionModel, targetGradients: [Double]) {
         for (i, nodeIdx) in model.outputNodeIndices.enumerated() {
             if i < targetGradients.count { model.nodeGradients[nodeIdx] = targetGradients[i] }
         }
