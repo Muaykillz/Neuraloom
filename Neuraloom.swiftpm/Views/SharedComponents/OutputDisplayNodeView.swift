@@ -20,19 +20,6 @@ struct OutputDisplayNodeView: View {
                     .foregroundStyle(.green)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
-
-                GeometryReader { geo in
-                    let clamped = min(max(displayValue, 0), 1)
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(Color.green.opacity(0.15))
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(Color.green)
-                            .frame(width: geo.size.width * clamped)
-                    }
-                }
-                .frame(height: 6)
-                .padding(.horizontal, 4)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)

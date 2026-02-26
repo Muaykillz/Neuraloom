@@ -358,6 +358,8 @@ struct CanvasNodeView: View {
             LossNodeView(viewModel: viewModel, node: node)
         case .outputDisplay:
             OutputDisplayNodeView(viewModel: viewModel, node: node)
+        case .annotation:
+            AnnotationNodeView(viewModel: viewModel, node: node)
         default:
             NeuronNodeView(viewModel: viewModel, node: node)
         }

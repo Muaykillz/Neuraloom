@@ -499,7 +499,7 @@ class CanvasViewModel: ObservableObject {
         case .outputDisplay:
             return CGRect(x: p.x - 80, y: p.y - 50, width: 160, height: 100)
         case .annotation:
-            return CGRect(x: p.x - 40, y: p.y - 40, width: 80, height: 80)
+            return CGRect(x: p.x - 70, y: p.y - 18, width: 140, height: 36)
         }
     }
     
@@ -1084,6 +1084,7 @@ struct NodeViewModel: Identifiable {
     var datasetConfig: DatasetNodeConfig?
     var lossConfig: LossNodeConfig?
     var outputDisplayValue: Double?
+    var annotationText: String = "Note"
 
     var isInput: Bool { role == .input }
     var isOutput: Bool { role == .output }
