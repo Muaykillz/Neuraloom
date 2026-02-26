@@ -29,6 +29,15 @@ class CanvasViewModel: ObservableObject {
     @Published var stepGranularity: StepGranularity = .epoch
     @Published var activeSampleIndex: Int? = nil
     @Published var stepCount = 0
+    @Published var playgroundMode: PlaygroundMode = .dev {
+        didSet { clearGlow() }
+    }
+    var inspectMode: Bool { playgroundMode == .inspect }
+    @Published var nodeOutputs: [UUID: Double] = [:]
+    @Published var nodeGradients: [UUID: Double] = [:]
+    @Published var stepPhase: StepPhase? = nil
+    @Published var glowingNodeIds: Set<UUID> = []
+    @Published var glowingConnectionIds: Set<UUID> = []
     private var sampleLossAccumulator: [Double] = []
 
     private let trainingService = TrainingService()
@@ -158,7 +167,15 @@ class CanvasViewModel: ObservableObject {
             }
         }
         if !connections.contains(where: { $0.sourceNodeId == sourceId && $0.targetNodeId == targetId }) {
-            connections.append(ConnectionViewModel(sourceNodeId: sourceId, targetNodeId: targetId))
+            let initVal: Double
+            if isDatasetPort || isLossPort {
+                initVal = 0.0  // utility links — not real weights
+            } else if nodes.first(where: { $0.id == sourceId })?.isBias == true {
+                initVal = 0.0  // bias → target: standard 0 init
+            } else {
+                initVal = Double.random(in: -1.0...1.0)  // Xavier-ish
+            }
+            connections.append(ConnectionViewModel(sourceNodeId: sourceId, targetNodeId: targetId, value: initVal))
         }
     }
 
@@ -223,7 +240,7 @@ class CanvasViewModel: ObservableObject {
         guard !neurons.isEmpty else { return nil }
         let xs = neurons.map(\.position.x)
         let ys = neurons.map(\.position.y)
-        let padding: CGFloat = 40
+        let padding: CGFloat = 60
         return CGRect(
             x: xs.min()! - padding, y: ys.min()! - padding,
             width: xs.max()! - xs.min()! + padding * 2,
@@ -245,7 +262,10 @@ class CanvasViewModel: ObservableObject {
         let midY = (src.y + dst.y) / 2
         guard midY > bbox.minY && midY < bbox.maxY else { return nil }
 
-        return bbox.maxY + 60
+        // Scale margin with horizontal span so wider networks get more clearance
+        let spanX = maxX - minX
+        let margin = max(80, spanX * 0.15)
+        return bbox.maxY + margin
     }
 
     /// Output handle position (right edge) per node type
@@ -548,8 +568,12 @@ class CanvasViewModel: ObservableObject {
 
     private func startEpochTraining() {
         let compiled: TrainingService.CompiledNetwork
-        do { compiled = try trainingService.buildNetwork(nodes: nodes, connections: connections) }
-        catch { triggerToast(error.localizedDescription); isTraining = false; return }
+        if let existing = trainingService.currentSteppingNetwork() {
+            compiled = existing
+        } else {
+            do { compiled = try trainingService.buildNetwork(nodes: nodes, connections: connections) }
+            catch { triggerToast(error.localizedDescription); isTraining = false; return }
+        }
 
         let config = TrainingConfig(
             learningRate: learningRate,
@@ -565,6 +589,7 @@ class CanvasViewModel: ObservableObject {
                 self.currentLoss = update.loss
                 self.lossHistory.append(update.loss)
                 self.applyWeightSync(update.weightSync)
+                self.applyNodeSync(update.nodeSync)
             }
         } onComplete: { [weak self] in
             await MainActor.run { self?.isTraining = false }
@@ -636,6 +661,8 @@ class CanvasViewModel: ObservableObject {
                 }
             }
             self.applyWeightSync(update.weightSync)
+            self.applyNodeSync(update.nodeSync)
+            self.stepPhase = update.phase
             self.activeSampleIndex = update.sampleIndex
         }
     }
@@ -651,8 +678,16 @@ class CanvasViewModel: ObservableObject {
         stepCount = 0
         currentLoss = nil
         activeSampleIndex = nil
+        nodeOutputs = [:]
+        nodeGradients = [:]
+        stepPhase = nil
+        clearGlow()
         for i in connections.indices {
-            connections[i].value = 0.0
+            let src = connections[i].sourceNodeId
+            let isBias = nodes.first(where: { $0.id == src })?.isBias == true
+            let isUtility = columnPortPosition(portId: src) != nil
+                || lossPortPosition(portId: connections[i].targetNodeId) != nil
+            connections[i].value = (isBias || isUtility) ? 0.0 : Double.random(in: -1.0...1.0)
             connections[i].gradient = 0.0
         }
     }
@@ -671,6 +706,29 @@ class CanvasViewModel: ObservableObject {
                 connections[ci].gradient = vals.gradient
             }
         }
+    }
+
+    private func applyNodeSync(_ sync: [UUID: (value: Double, gradient: Double)]) {
+        for (nodeId, vals) in sync {
+            nodeOutputs[nodeId] = vals.value
+            nodeGradients[nodeId] = vals.gradient
+        }
+    }
+
+    // MARK: - Glow (concept box tap → highlight on canvas)
+
+    func toggleGlow(nodeIds: Set<UUID> = [], connectionIds: Set<UUID> = []) {
+        if glowingNodeIds == nodeIds && glowingConnectionIds == connectionIds {
+            clearGlow()
+        } else {
+            glowingNodeIds = nodeIds
+            glowingConnectionIds = connectionIds
+        }
+    }
+
+    func clearGlow() {
+        glowingNodeIds = []
+        glowingConnectionIds = []
     }
     
     func fitToScreen(in size: CGSize, insets: EdgeInsets) {
@@ -700,36 +758,108 @@ class CanvasViewModel: ObservableObject {
     }
     
     func autoLayout() {
+        // Only layout neuron nodes — leave dataset, loss, viz, annotation in place
+        let neuronIds = Set(nodes.filter { $0.type == .neuron }.map { $0.id })
+        let neuronConns = connections.filter { neuronIds.contains($0.sourceNodeId) && neuronIds.contains($0.targetNodeId) }
+
+        // Compute depths via BFS on neuron-only subgraph
         var nodeDepths: [UUID: Int] = [:]
-        let inputs = nodes.filter { node in !connections.contains(where: { $0.targetNodeId == node.id }) }
+        let inputs = nodes.filter { node in node.type == .neuron && !neuronConns.contains(where: { $0.targetNodeId == node.id }) }
         for input in inputs { nodeDepths[input.id] = 0 }
         var changed = true
         while changed {
             changed = false
-            for connection in connections {
-                if let sourceDepth = nodeDepths[connection.sourceNodeId] {
-                    let targetDepth = nodeDepths[connection.targetNodeId]
+            for conn in neuronConns {
+                if let sourceDepth = nodeDepths[conn.sourceNodeId] {
+                    let targetDepth = nodeDepths[conn.targetNodeId]
                     if targetDepth == nil || targetDepth! < sourceDepth + 1 {
-                        nodeDepths[connection.targetNodeId] = sourceDepth + 1
+                        nodeDepths[conn.targetNodeId] = sourceDepth + 1
                         changed = true
                     }
                 }
             }
         }
+
         let maxDepth = nodeDepths.values.max() ?? 0
         var layers: [[NodeViewModel]] = Array(repeating: [], count: maxDepth + 1)
-        for node in nodes { layers[nodeDepths[node.id] ?? 0].append(node) }
+        for node in nodes where node.type == .neuron {
+            layers[nodeDepths[node.id] ?? 0].append(node)
+        }
+
+        // Compute network center Y for vertical centering
+        let neuronPositions = nodes.filter { $0.type == .neuron }.map { $0.position }
+        let centerY = neuronPositions.isEmpty ? 300.0
+            : (neuronPositions.map(\.y).min()! + neuronPositions.map(\.y).max()!) / 2
+
+        let hSpacing: CGFloat = 250
+        let vSpacing: CGFloat = 200
+        let startX: CGFloat = 100
+
         withAnimation(.spring()) {
+            // 1. Layout neuron layers
             for (layerIndex, layerNodes) in layers.enumerated() {
-                let startLayerY = CGFloat(100) + (CGFloat(200) - CGFloat(layerNodes.count - 1) * CGFloat(150) / CGFloat(2))
+                let layerHeight = CGFloat(layerNodes.count - 1) * vSpacing
+                let startY = centerY - layerHeight / 2
                 for (nodeIndex, node) in layerNodes.enumerated() {
-                    let newX = CGFloat(100) + CGFloat(layerIndex) * CGFloat(200)
-                    let newY = startLayerY + CGFloat(nodeIndex) * CGFloat(150)
-                    if let index = nodes.firstIndex(where: { $0.id == node.id }) { nodes[index].position = CGPoint(x: newX, y: newY) }
+                    let newX = startX + CGFloat(layerIndex) * hSpacing
+                    let newY = startY + CGFloat(nodeIndex) * vSpacing
+                    if let index = nodes.firstIndex(where: { $0.id == node.id }) {
+                        nodes[index].position = CGPoint(x: newX, y: newY)
+                    }
+                }
+            }
+
+            // 2. Layout pipeline nodes relative to the network
+            let networkLeftX = startX
+            let networkRightX = startX + CGFloat(maxDepth) * hSpacing
+            let pipelineGap: CGFloat = 250
+
+            // Dataset nodes → left of input layer
+            let datasetNodes = nodes.filter { $0.type == .dataset }
+            if !datasetNodes.isEmpty {
+                let dsX = networkLeftX - pipelineGap
+                let totalH = CGFloat(datasetNodes.count - 1) * vSpacing
+                let dsStartY = centerY - totalH / 2
+                for (i, ds) in datasetNodes.enumerated() {
+                    if let idx = nodes.firstIndex(where: { $0.id == ds.id }) {
+                        nodes[idx].position = CGPoint(x: dsX, y: dsStartY + CGFloat(i) * vSpacing)
+                    }
+                }
+            }
+
+            // Loss nodes → right of output layer
+            let lossNodes = nodes.filter { $0.type == .loss }
+            if !lossNodes.isEmpty {
+                let lossX = networkRightX + pipelineGap
+                let totalH = CGFloat(lossNodes.count - 1) * vSpacing
+                let lossStartY = centerY - totalH / 2
+                for (i, ln) in lossNodes.enumerated() {
+                    if let idx = nodes.firstIndex(where: { $0.id == ln.id }) {
+                        nodes[idx].position = CGPoint(x: lossX, y: lossStartY + CGFloat(i) * vSpacing)
+                    }
+                }
+            }
+
+            // Visualization nodes → right of loss nodes (or right of network if no loss)
+            let vizNodes = nodes.filter { $0.type == .visualization }
+            if !vizNodes.isEmpty {
+                let vizAnchorX = lossNodes.isEmpty ? networkRightX : networkRightX + pipelineGap
+                let vizX = vizAnchorX + pipelineGap
+                let totalH = CGFloat(vizNodes.count - 1) * vSpacing
+                let vizStartY = centerY - totalH / 2
+                for (i, vn) in vizNodes.enumerated() {
+                    if let idx = nodes.firstIndex(where: { $0.id == vn.id }) {
+                        nodes[idx].position = CGPoint(x: vizX, y: vizStartY + CGFloat(i) * vSpacing)
+                    }
                 }
             }
         }
     }
+}
+
+enum PlaygroundMode: String, CaseIterable {
+    case dev     = "Dev"
+    case inspect = "Inspect"
 }
 
 enum NodeRole: String, CaseIterable {
