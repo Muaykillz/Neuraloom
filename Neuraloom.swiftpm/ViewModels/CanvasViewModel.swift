@@ -25,7 +25,7 @@ class CanvasViewModel: ObservableObject {
     @Published var learningRate: Double = 0.1
     @Published var selectedLossFunction: LossFunction = .mse
     @Published var currentLoss: Double? = nil
-    @Published var lossHistory: [Double] = []      // always epoch-scale
+    @Published var lossHistory: [Double] = []
     @Published var stepGranularity: StepGranularity = .epoch
     @Published var activeSampleIndex: Int? = nil
     @Published var stepCount = 0
@@ -39,6 +39,17 @@ class CanvasViewModel: ObservableObject {
     @Published var glowingNodeIds: Set<UUID> = []
     @Published var glowingConnectionIds: Set<UUID> = []
     private var sampleLossAccumulator: [Double] = []
+
+    // MARK: - Inference Mode State
+    @Published var canvasMode: CanvasMode = .train
+    @Published var inferenceInputs: [UUID: Double] = [:]
+    @Published var inferenceInputInfos: [InferenceInputInfo] = []
+    @Published var inferenceOutputNodeIds: [UUID] = []
+    @Published var autoOutputDisplayIds: [UUID] = []
+    private var savedPlaygroundMode: PlaygroundMode = .dev
+    private var savedSelectedNodeId: UUID?
+    private var savedSelectedConnectionId: UUID?
+    private var compiledInferenceNetwork: TrainingService.CompiledNetwork?
 
     private let trainingService = TrainingService()
 
@@ -272,9 +283,10 @@ class CanvasViewModel: ObservableObject {
     private func outputEdge(of node: NodeViewModel) -> CGPoint {
         let p = node.position
         switch node.type {
-        case .neuron:        return CGPoint(x: p.x + 25, y: p.y)   // circle r=25
-        case .loss:          return CGPoint(x: p.x + 64, y: p.y)   // card 120/2 + 4
-        case .visualization: return CGPoint(x: p.x + 109, y: p.y)  // card 210/2 + 4
+        case .neuron:        return CGPoint(x: p.x + 25, y: p.y)
+        case .loss:          return CGPoint(x: p.x + 60, y: p.y)
+        case .visualization: return CGPoint(x: p.x + 109, y: p.y)
+        case .outputDisplay: return CGPoint(x: p.x + 70, y: p.y)
         default:             return p
         }
     }
@@ -283,9 +295,10 @@ class CanvasViewModel: ObservableObject {
     private func inputEdge(of node: NodeViewModel) -> CGPoint {
         let p = node.position
         switch node.type {
-        case .neuron:        return p                                // lines arrive at center (circle is small)
-        case .loss:          return CGPoint(x: p.x - 64, y: p.y)   // card 120/2 + 4
-        case .visualization: return CGPoint(x: p.x - 109, y: p.y)  // card 210/2 + 4
+        case .neuron:        return p
+        case .loss:          return CGPoint(x: p.x - 63, y: p.y)
+        case .visualization: return CGPoint(x: p.x - 109, y: p.y)
+        case .outputDisplay: return CGPoint(x: p.x - 70, y: p.y)
         default:             return p
         }
     }
@@ -297,7 +310,7 @@ class CanvasViewModel: ObservableObject {
                 let totalH = CGFloat(config.inputPortIds.count - 1) * DatasetNodeLayout.portSpacing
                 let startY = node.position.y - totalH / 2
                 return CGPoint(
-                    x: node.position.x - 60 - DatasetNodeLayout.portRadius - 2,
+                    x: node.position.x - 63,
                     y: startY + CGFloat(pi) * DatasetNodeLayout.portSpacing
                 )
             }
@@ -309,6 +322,16 @@ class CanvasViewModel: ObservableObject {
         for node in nodes where node.type == .dataset {
             guard let config = node.datasetConfig else { continue }
             if let ci = config.columnPortIds.firstIndex(of: portId) {
+                if canvasMode == .inference {
+                    let inputCount = config.preset.inputColumnCount
+                    guard ci < inputCount else { return nil }
+                    return DatasetNodeLayout.portPosition(
+                        nodePosition: node.position,
+                        columnIndex: ci,
+                        totalColumns: inputCount,
+                        nodeHeight: DatasetNodeLayout.height(for: config)
+                    )
+                }
                 let h = DatasetNodeLayout.height(for: config)
                 return DatasetNodeLayout.portPosition(
                     nodePosition: node.position,
@@ -473,6 +496,8 @@ class CanvasViewModel: ObservableObject {
             let h = node.datasetConfig.map { DatasetNodeLayout.height(for: $0) } ?? 120
             return CGRect(x: p.x - DatasetNodeLayout.width / 2 - 10, y: p.y - h / 2 - 10,
                           width: DatasetNodeLayout.width + 50, height: h + 20)
+        case .outputDisplay:
+            return CGRect(x: p.x - 80, y: p.y - 50, width: 160, height: 100)
         case .annotation:
             return CGRect(x: p.x - 40, y: p.y - 40, width: 80, height: 80)
         }
@@ -730,13 +755,163 @@ class CanvasViewModel: ObservableObject {
         glowingNodeIds = []
         glowingConnectionIds = []
     }
+
+    // MARK: - Inference Mode
+
+    func enterInferenceMode() {
+        guard canvasMode == .train else { return }
+        stopTraining()
+
+        do {
+            compiledInferenceNetwork = try trainingService.buildNetwork(nodes: nodes, connections: connections)
+        } catch {
+            triggerToast("Cannot enter inference: \(error.localizedDescription)")
+            return
+        }
+
+        savedPlaygroundMode = playgroundMode
+        savedSelectedNodeId = selectedNodeId
+        savedSelectedConnectionId = selectedConnectionId
+
+        inferenceInputInfos = []
+        inferenceInputs = [:]
+        if let dsNode = nodes.first(where: { $0.type == .dataset }),
+           let config = dsNode.datasetConfig {
+            let preset = config.preset
+            let ranges = preset.inputRanges
+            let inputCols = preset.inputColumns
+            for i in 0..<inputCols.count {
+                let portId = config.columnPortIds[i]
+                let range = i < ranges.count ? ranges[i] : (min: 0.0, max: 1.0)
+                let mid = (range.min + range.max) / 2.0
+                inferenceInputInfos.append(InferenceInputInfo(
+                    label: inputCols[i],
+                    portId: portId,
+                    range: range.min...range.max
+                ))
+                inferenceInputs[portId] = mid
+            }
+        }
+
+        inferenceOutputNodeIds = nodes.filter { $0.type == .neuron && $0.isOutput }.map(\.id)
+
+        autoOutputDisplayIds = []
+        for outId in inferenceOutputNodeIds {
+            if let outNode = nodes.first(where: { $0.id == outId }) {
+                let displayId = UUID()
+                var displayNode = NodeViewModel(
+                    id: displayId,
+                    position: CGPoint(x: outNode.position.x + 150, y: outNode.position.y),
+                    type: .outputDisplay
+                )
+                displayNode.outputDisplayValue = nodeOutputs[outId]
+                nodes.append(displayNode)
+                connections.append(ConnectionViewModel(sourceNodeId: outId, targetNodeId: displayId))
+                autoOutputDisplayIds.append(displayId)
+            }
+        }
+
+        playgroundMode = .inspect
+        selectedNodeId = nil
+        selectedConnectionId = nil
+        connectionTapGlobalLocation = nil
+
+        withAnimation(.spring()) {
+            canvasMode = .inference
+        }
+
+        runInference()
+    }
+
+    func exitInferenceMode() {
+        guard canvasMode == .inference else { return }
+
+        let autoIds = Set(autoOutputDisplayIds)
+        nodes.removeAll { autoIds.contains($0.id) }
+        connections.removeAll { autoIds.contains($0.sourceNodeId) || autoIds.contains($0.targetNodeId) }
+
+        playgroundMode = savedPlaygroundMode
+        selectedNodeId = savedSelectedNodeId
+        selectedConnectionId = savedSelectedConnectionId
+
+        inferenceInputInfos = []
+        inferenceInputs = [:]
+        inferenceOutputNodeIds = []
+        autoOutputDisplayIds = []
+        compiledInferenceNetwork = nil
+
+        withAnimation(.spring()) {
+            canvasMode = .train
+        }
+    }
+
+    func runInference() {
+        guard var net = compiledInferenceNetwork else { return }
+
+        let inputNeuronIds = nodes.filter { $0.type == .neuron && $0.isInput }.map(\.id)
+        var inputValues: [Double] = []
+
+        for neuronId in inputNeuronIds {
+            var value = 0.0
+            for conn in connections {
+                if conn.targetNodeId == neuronId,
+                   let v = inferenceInputs[conn.sourceNodeId] {
+                    value = v
+                    break
+                }
+            }
+            inputValues.append(value)
+        }
+
+        ExecutionEngine.predict(model: &net.model, input: inputValues)
+        compiledInferenceNetwork = net
+
+        for (vmId, idx) in net.nodeVMIdToNodeIdx {
+            nodeOutputs[vmId] = net.model.nodeValues[idx]
+        }
+
+        for (i, outNeuronId) in inferenceOutputNodeIds.enumerated() {
+            let value = nodeOutputs[outNeuronId] ?? 0
+            if i < autoOutputDisplayIds.count {
+                if let idx = nodes.firstIndex(where: { $0.id == autoOutputDisplayIds[i] }) {
+                    nodes[idx].outputDisplayValue = value
+                }
+            }
+        }
+    }
+
+    // MARK: - Visible Nodes/Connections (filtered by mode)
+
+    var visibleNodes: [NodeViewModel] {
+        if canvasMode == .train { return nodes }
+        return nodes.filter { node in
+            switch node.type {
+            case .loss, .visualization: return false
+            default: return true
+            }
+        }
+    }
+
+    var visibleConnections: [DrawableConnection] {
+        if canvasMode == .train { return drawableConnections }
+        let hiddenNodeIds = Set(nodes.filter { $0.type == .loss || $0.type == .visualization }.map(\.id))
+        let hiddenPortIds: Set<UUID> = Set(nodes.compactMap { $0.lossConfig }.flatMap { $0.inputPortIds })
+        return drawableConnections.filter { conn in
+            let rawConn = connections.first(where: { $0.id == conn.id })
+            guard let raw = rawConn else { return true }
+            if hiddenNodeIds.contains(raw.sourceNodeId) || hiddenNodeIds.contains(raw.targetNodeId) { return false }
+            if hiddenPortIds.contains(raw.sourceNodeId) || hiddenPortIds.contains(raw.targetNodeId) { return false }
+            return true
+        }
+    }
     
     func fitToScreen(in size: CGSize, insets: EdgeInsets) {
-        guard !nodes.isEmpty else { scale = 1.0; offset = .zero; return }
-        let minX = nodes.map { $0.position.x }.min() ?? 0
-        let maxX = nodes.map { $0.position.x }.max() ?? 0
-        let minY = nodes.map { $0.position.y }.min() ?? 0
-        let maxY = nodes.map { $0.position.y }.max() ?? 0
+        let fitNodes = visibleNodes
+        guard !fitNodes.isEmpty else { scale = 1.0; offset = .zero; return }
+        let minX = fitNodes.map { $0.position.x }.min() ?? 0
+        let maxX = fitNodes.map { $0.position.x }.max() ?? 0
+        let minY = fitNodes.map { $0.position.y }.min() ?? 0
+        let maxY = fitNodes.map { $0.position.y }.max() ?? 0
         let contentWidth = maxX - minX + 150
         let contentHeight = maxY - minY + 150
         let contentCenter = CGPoint(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
@@ -857,6 +1032,17 @@ class CanvasViewModel: ObservableObject {
     }
 }
 
+enum CanvasMode: String {
+    case train, inference
+}
+
+struct InferenceInputInfo: Identifiable {
+    let id = UUID()
+    let label: String
+    let portId: UUID
+    let range: ClosedRange<Double>
+}
+
 enum PlaygroundMode: String, CaseIterable {
     case dev     = "Dev"
     case inspect = "Inspect"
@@ -875,6 +1061,7 @@ struct NodeViewModel: Identifiable {
         case dataset = "Dataset"
         case loss = "Loss"
         case visualization = "Viz"
+        case outputDisplay = "Result"
         case annotation = "Note"
 
         var icon: String {
@@ -883,9 +1070,11 @@ struct NodeViewModel: Identifiable {
             case .dataset: return "tablecells.fill"
             case .loss: return "target"
             case .visualization: return "chart.line.uptrend.xyaxis"
+            case .outputDisplay: return "eye.circle.fill"
             case .annotation: return "note.text"
             }
         }
+
     }
     let id: UUID
     var position: CGPoint
@@ -894,6 +1083,7 @@ struct NodeViewModel: Identifiable {
     var role: NodeRole = .hidden
     var datasetConfig: DatasetNodeConfig?
     var lossConfig: LossNodeConfig?
+    var outputDisplayValue: Double?
 
     var isInput: Bool { role == .input }
     var isOutput: Bool { role == .output }

@@ -2,13 +2,14 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject var canvasViewModel = CanvasViewModel()
-    
+    @State private var showPlayground = true
+
     var body: some View {
-        PlaygroundView()
-            .environmentObject(canvasViewModel)
-            .task {
-//                runAllCoreEngineTests()
-//                await runCanvasIntegrationTests()
-            }
+        if showPlayground {
+            PlaygroundView(onDismiss: { showPlayground = false })
+                .environmentObject(canvasViewModel)
+        } else {
+            HomeView(onOpenPlayground: { showPlayground = true })
+        }
     }
 }

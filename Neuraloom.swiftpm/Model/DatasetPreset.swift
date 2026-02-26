@@ -22,6 +22,20 @@ enum DatasetPreset: String, CaseIterable, Sendable {
         }
     }
 
+    /// (min, max) range for each input column — used for inference sliders
+    var inputRanges: [(min: Double, max: Double)] {
+        switch self {
+        case .xor:    return [(0, 1), (0, 1)]
+        case .linear: return [(0, 1)]
+        case .circle: return [(-1, 1), (-1, 1)]
+        case .spiral: return [(-1, 1), (-1, 1)]
+        }
+    }
+
+    var inputColumns: [String] {
+        Array(columns.prefix(inputColumnCount))
+    }
+
     var rows: [[Double]] {
         switch self {
         case .xor:    return [[0,0,0], [0,1,1], [1,0,1], [1,1,0]]

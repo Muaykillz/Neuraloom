@@ -72,30 +72,31 @@ struct NeuronNodeView: View {
                         .onDisappear { viewModel.clearGlow() }
                 }
 
-            // Connection Handle with better visibility
-            Circle()
-                .fill(Color.white)
-                .frame(width: 18, height: 18)
-                .overlay(
-                    Circle()
-                        .stroke(Color.orange, lineWidth: 2.5)
-                )
-                .frame(width: 44, height: 44)
-                .contentShape(Circle())
-                .offset(x: 24)
-                .gesture(
-                    DragGesture(coordinateSpace: .named("canvas"))
-                        .onChanged { value in
-                            if viewModel.activeWiringSource == nil {
-                                viewModel.startWiring(sourceId: node.id, location: value.location)
-                            } else {
-                                viewModel.updateWiringTarget(location: value.location)
+            if viewModel.canvasMode != .inference {
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 18, height: 18)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.orange, lineWidth: 2.5)
+                    )
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
+                    .offset(x: 24)
+                    .gesture(
+                        DragGesture(coordinateSpace: .named("canvas"))
+                            .onChanged { value in
+                                if viewModel.activeWiringSource == nil {
+                                    viewModel.startWiring(sourceId: node.id, location: value.location)
+                                } else {
+                                    viewModel.updateWiringTarget(location: value.location)
+                                }
                             }
-                        }
-                        .onEnded { value in
-                            viewModel.endWiring(sourceId: node.id, location: value.location)
-                        }
-                )
+                            .onEnded { value in
+                                viewModel.endWiring(sourceId: node.id, location: value.location)
+                            }
+                    )
+            }
         }
         .position(node.position)
     }

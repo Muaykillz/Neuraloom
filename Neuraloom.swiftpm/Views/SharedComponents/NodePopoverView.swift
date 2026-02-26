@@ -18,15 +18,17 @@ struct NodePopoverView: View {
                 Text(node.type.rawValue)
                     .font(.headline)
                 Spacer()
-                Button(role: .destructive) {
-                    viewModel.clearGlow()
-                    viewModel.selectedNodeId = nil
-                    viewModel.deleteNode(id: node.id)
-                } label: {
-                    Image(systemName: "trash")
-                        .foregroundStyle(.red)
+                if viewModel.canvasMode != .inference {
+                    Button(role: .destructive) {
+                        viewModel.clearGlow()
+                        viewModel.selectedNodeId = nil
+                        viewModel.deleteNode(id: node.id)
+                    } label: {
+                        Image(systemName: "trash")
+                            .foregroundStyle(.red)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
 
             Divider()
@@ -343,6 +345,7 @@ struct ForwardTermBox: View {
         case .dataset:       return .blue
         case .loss:          return .red
         case .visualization: return .purple
+        case .outputDisplay: return .green
         case .annotation:    return .gray
         }
     }
@@ -624,6 +627,7 @@ struct DeltaSectionView: View {
         case .dataset:       return .blue
         case .loss:          return .red
         case .visualization: return .purple
+        case .outputDisplay: return .green
         case .annotation:    return .gray
         }
     }

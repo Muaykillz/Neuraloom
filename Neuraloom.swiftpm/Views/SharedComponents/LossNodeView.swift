@@ -6,8 +6,8 @@ struct LossNodeView: View {
 
     private let cardWidth: CGFloat = 120
     private let cardHeight: CGFloat = 72
-    private let portRadius: CGFloat = DatasetNodeLayout.portRadius   // 9
-    private let portSpacing: CGFloat = DatasetNodeLayout.portSpacing // 26
+    private let portRadius: CGFloat = DatasetNodeLayout.portRadius
+    private let portSpacing: CGFloat = DatasetNodeLayout.portSpacing
 
     var isSelected: Bool { viewModel.selectedNodeId == node.id }
     var isGlowing: Bool { viewModel.glowingNodeIds.contains(node.id) }
@@ -15,7 +15,6 @@ struct LossNodeView: View {
 
     var body: some View {
         ZStack {
-            // Card — tap + popover anchored here
             cardBody
                 .onTapGesture {
                     viewModel.selectedNodeId = (viewModel.selectedNodeId == node.id) ? nil : node.id
@@ -28,7 +27,6 @@ struct LossNodeView: View {
                         .onDisappear { viewModel.clearGlow() }
                 }
 
-            // Input ports (left edge)
             ForEach(LossNodeConfig.portLabels.indices, id: \.self) { pi in
                 let yOff = CGFloat(pi) * portSpacing - portSpacing / 2
                 Text(LossNodeConfig.portLabels[pi])
@@ -37,22 +35,21 @@ struct LossNodeView: View {
                     .padding(.horizontal, 3)
                     .padding(.vertical, 1)
                     .background(.background.opacity(0.9), in: RoundedRectangle(cornerRadius: 3))
-                    .offset(x: -(cardWidth / 2 + portRadius * 2 + 14), y: yOff)
+                    .offset(x: -(cardWidth / 2 + portRadius + 12), y: yOff)
                 Circle()
                     .fill(Color.white)
                     .frame(width: portRadius * 2, height: portRadius * 2)
                     .overlay(Circle().stroke(Color.red, lineWidth: 2.5))
-                    .offset(x: -(cardWidth / 2 + portRadius + 2), y: yOff)
+                    .offset(x: -(cardWidth / 2 + 3), y: yOff)
             }
 
-            // Output handle (right edge)
             Circle()
                 .fill(Color.white)
                 .frame(width: 18, height: 18)
                 .overlay(Circle().stroke(Color.red, lineWidth: 2.5))
                 .frame(width: 44, height: 44)
                 .contentShape(Circle())
-                .offset(x: cardWidth / 2 + 4)
+                .offset(x: cardWidth / 2)
                 .gesture(
                     DragGesture(coordinateSpace: .named("canvas"))
                         .onChanged { value in
@@ -76,7 +73,7 @@ struct LossNodeView: View {
         )
     }
 
-    // MARK: - Card Body (popover anchor)
+    // MARK: - Card Body
 
     private var cardBody: some View {
         ZStack {

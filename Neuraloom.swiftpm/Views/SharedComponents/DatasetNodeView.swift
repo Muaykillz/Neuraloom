@@ -42,18 +42,31 @@ struct DatasetNodeView: View {
     private var preset: DatasetPreset { config.preset }
     private var nodeHeight: CGFloat { DatasetNodeLayout.height(for: config) }
 
+    private var isInferenceMode: Bool { viewModel.canvasMode == .inference }
+
+    private var inferenceHeight: CGFloat {
+        let inputCount = CGFloat(viewModel.inferenceInputInfos.count)
+        return 52 + inputCount * 62 + 8  // header + inputs + padding
+    }
+
     var body: some View {
         ZStack {
-            // Main card
             VStack(alignment: .leading, spacing: 0) {
-                header
-                Divider().padding(.horizontal, 8)
-                columnHeaders
-                dataRows
-                overflowLabel
-                Spacer(minLength: 4)
+                if isInferenceMode {
+                    inferenceHeader
+                    Divider().padding(.horizontal, 8)
+                    inferenceInputControls
+                    Spacer(minLength: 4)
+                } else {
+                    header
+                    Divider().padding(.horizontal, 8)
+                    columnHeaders
+                    dataRows
+                    overflowLabel
+                    Spacer(minLength: 4)
+                }
             }
-            .frame(width: DatasetNodeLayout.width, height: nodeHeight)
+            .frame(width: DatasetNodeLayout.width, height: isInferenceMode ? inferenceHeight : nodeHeight)
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(.regularMaterial)
@@ -68,12 +81,17 @@ struct DatasetNodeView: View {
                     .animation(.easeInOut(duration: 0.3), value: isGlowing)
             )
 
-            // Port column — overlay on right edge
-            portColumn
+            if isInferenceMode {
+                inferencePortColumn
+            } else {
+                portColumn
+            }
         }
         .position(node.position)
         .onTapGesture {
-            viewModel.selectedNodeId = (viewModel.selectedNodeId == node.id) ? nil : node.id
+            if !isInferenceMode {
+                viewModel.selectedNodeId = (viewModel.selectedNodeId == node.id) ? nil : node.id
+            }
         }
         .gesture(
             DragGesture(coordinateSpace: .named("canvas"))
@@ -187,7 +205,6 @@ struct DatasetNodeView: View {
             let portId = config.columnPortIds[ci]
             let yOff = CGFloat(ci) * DatasetNodeLayout.portSpacing - totalH / 2
 
-            // Port circle — flush against right edge of card
             Circle()
                 .fill(Color.white)
                 .frame(width: pr * 2, height: pr * 2)
@@ -209,7 +226,6 @@ struct DatasetNodeView: View {
                         }
                 )
 
-            // Label outside
             Text(cols[ci])
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.blue.opacity(0.85))
@@ -225,5 +241,81 @@ struct DatasetNodeView: View {
             return String(format: "%.0f", v)
         }
         return String(format: "%.2f", v)
+    }
+
+    // MARK: - Inference Mode Views
+
+    private var inferenceHeader: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 10))
+                .foregroundStyle(.green)
+            Text("Input")
+                .font(.caption.bold())
+                .foregroundStyle(.primary)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    private var inferenceInputControls: some View {
+        VStack(spacing: 8) {
+            ForEach(viewModel.inferenceInputInfos) { info in
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text(info.label)
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.blue)
+                        Spacer()
+                        TextField("0.0", value: Binding(
+                            get: { viewModel.inferenceInputs[info.portId] ?? 0 },
+                            set: { viewModel.inferenceInputs[info.portId] = $0 }
+                        ), format: .number.precision(.fractionLength(2)))
+                            .keyboardType(.decimalPad)
+                            .font(.system(size: 10, design: .monospaced))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 56)
+                    }
+                    Slider(
+                        value: Binding(
+                            get: { viewModel.inferenceInputs[info.portId] ?? 0 },
+                            set: { viewModel.inferenceInputs[info.portId] = $0 }
+                        ),
+                        in: info.range
+                    )
+                    .tint(.blue)
+                }
+                .padding(.horizontal, 10)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var inferencePortColumn: some View {
+        let inputInfos = viewModel.inferenceInputInfos
+        let totalH = CGFloat(inputInfos.count - 1) * DatasetNodeLayout.portSpacing
+        let pr = DatasetNodeLayout.portRadius
+        let cardW = DatasetNodeLayout.width
+
+        ForEach(inputInfos.indices, id: \.self) { i in
+            let yOff = CGFloat(i) * DatasetNodeLayout.portSpacing - totalH / 2
+
+            Circle()
+                .fill(Color.white)
+                .frame(width: pr * 2, height: pr * 2)
+                .overlay(Circle().stroke(Color.blue, lineWidth: 2.5))
+                .offset(x: cardW / 2 + pr + 2, y: yOff)
+                .allowsHitTesting(false)
+
+            Text(inputInfos[i].label)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.blue.opacity(0.85))
+                .padding(.horizontal, 3)
+                .padding(.vertical, 1)
+                .background(.background.opacity(0.9), in: RoundedRectangle(cornerRadius: 3))
+                .offset(x: cardW / 2 + pr * 2 + 14, y: yOff)
+        }
     }
 }

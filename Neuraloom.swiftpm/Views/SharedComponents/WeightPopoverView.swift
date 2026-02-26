@@ -187,6 +187,7 @@ struct WeightPopoverView: View {
         case .dataset:       return .blue
         case .loss:          return .red
         case .visualization: return .purple
+        case .outputDisplay: return .green
         case .annotation:    return .gray
         }
     }

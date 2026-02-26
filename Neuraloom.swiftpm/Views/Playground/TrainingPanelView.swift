@@ -162,6 +162,9 @@ struct TrainingPanelView: View {
                 // Collapsed pill
                 Button { isExpanded = true } label: {
                     HStack(spacing: 6) {
+                        Image(systemName: viewModel.inspectMode ? "magnifyingglass" : "slider.horizontal.3")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(viewModel.isTraining ? .orange : .secondary)
                         if viewModel.isTraining {
                             Circle().fill(Color.orange).frame(width: 6, height: 6)
                         }
