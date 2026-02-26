@@ -73,16 +73,32 @@ enum DatasetPreset: String, CaseIterable, Sendable {
 struct DatasetNodeConfig {
     var preset: DatasetPreset = .xor
     var columnPortIds: [UUID]
+    var cachedRows: [[Double]]
 
     init(preset: DatasetPreset = .xor) {
         self.preset = preset
         self.columnPortIds = preset.columns.map { _ in UUID() }
+        self.cachedRows = preset.rows
+    }
+
+    var rows: [[Double]] { cachedRows }
+
+    var trainingData: [([Double], [Double])] {
+        let ic = preset.inputColumnCount
+        return cachedRows.map { row in
+            (Array(row.prefix(ic)), Array(row.suffix(from: ic)))
+        }
     }
 
     mutating func updatePreset(_ newPreset: DatasetPreset) {
         preset = newPreset
+        cachedRows = newPreset.rows
         if columnPortIds.count != newPreset.columns.count {
             columnPortIds = newPreset.columns.map { _ in UUID() }
         }
+    }
+
+    mutating func regenerate() {
+        cachedRows = preset.rows
     }
 }

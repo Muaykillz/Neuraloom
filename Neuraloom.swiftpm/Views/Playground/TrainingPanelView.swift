@@ -13,20 +13,13 @@ struct TrainingPanelView: View {
             if isExpanded {
                 HStack(spacing: 16) {
 
-                    // Loss Function dropdown
-                    Menu {
-                        Button("MSE") { viewModel.selectedLossFunction = .mse }
-                        Button("Cross-Entropy") { viewModel.selectedLossFunction = .crossEntropy }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(viewModel.selectedLossFunction == .mse ? "MSE" : "Cross-Entropy")
-                                .font(.caption)
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.system(size: 9))
-                        }
-                        .foregroundStyle(.primary)
+                    // Mode switcher
+                    Picker("Mode", selection: $viewModel.playgroundMode) {
+                        Text("Dev").tag(PlaygroundMode.dev)
+                        Text("Inspect").tag(PlaygroundMode.inspect)
                     }
-                    .disabled(viewModel.isTraining)
+                    .pickerStyle(.segmented)
+                    .frame(width: 130)
 
                     Divider().frame(height: 20)
 
@@ -76,12 +69,19 @@ struct TrainingPanelView: View {
 
                     Divider().frame(height: 20)
 
-                    // Train section label + controls
-                    Text("Train")
-                        .font(.caption)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .foregroundStyle(.secondary)
+                    // Train label + phase indicator
+                    HStack(spacing: 3) {
+                        Text("Train")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let phase = viewModel.stepPhase {
+                            Text(phase == .forward ? "(Forward)" : "(Backward)")
+                                .font(.system(size: 9))
+                                .foregroundStyle(phase == .forward ? Color.blue : Color.orange)
+                        }
+                    }
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
 
                     // Step — always one sample; hold ≥1.5s to auto-repeat
                     Image(systemName: "forward.frame.fill")
@@ -92,13 +92,11 @@ struct TrainingPanelView: View {
                         .onLongPressGesture(minimumDuration: .infinity, pressing: { isPressing in
                             if isPressing && !viewModel.isTraining {
                                 pressStart = .now
-                                // After 1.5s start auto-repeat
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                                     guard pressStart != nil else { return }
                                     startAutoStep()
                                 }
                             } else {
-                                // Released — if timer never started, treat as single tap
                                 let wasAutoStepping = autoStepTimer != nil
                                 stopAutoStep()
                                 if !wasAutoStepping && pressStart != nil && !viewModel.isTraining {
@@ -167,7 +165,7 @@ struct TrainingPanelView: View {
                         if viewModel.isTraining {
                             Circle().fill(Color.orange).frame(width: 6, height: 6)
                         }
-                        Text("Training Controls")
+                        Text(viewModel.inspectMode ? "Inspect Mode" : "Training Controls")
                             .font(.subheadline)
                             .foregroundStyle(.primary)
                     }

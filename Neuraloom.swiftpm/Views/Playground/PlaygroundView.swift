@@ -2,7 +2,7 @@ import SwiftUI
 
 struct PlaygroundView: View {
     @EnvironmentObject var canvasViewModel: CanvasViewModel
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -35,21 +35,31 @@ struct PlaygroundView: View {
                     .onTapGesture {
                         canvasViewModel.selectedConnectionId = nil
                         canvasViewModel.connectionTapGlobalLocation = nil
+                        canvasViewModel.clearGlow()
                     }
                     
                     ZStack {
                         ForEach(canvasViewModel.drawableConnections) { conn in
                             let isSelected = canvasViewModel.selectedConnectionId == conn.id
+                            let isGlowing = canvasViewModel.glowingConnectionIds.contains(conn.id)
                             let absW = abs(conn.value)
+                            let glowTint: Color = conn.isUtilityLink ? .blue : .orange
                             let lineColor: Color = conn.isUtilityLink
-                                ? (isSelected ? Color.blue : Color.blue.opacity(0.3))
+                                ? (isGlowing ? Color.blue : (isSelected ? Color.blue : Color.blue.opacity(0.3)))
+                                : isGlowing ? Color.orange
                                 : (isSelected ? Color.orange : (absW < 0.05
                                     ? Color.primary.opacity(0.35)
                                     : Color.orange.opacity(0.3 + min(absW / 3.0, 1.0) * 0.7)))
                             let lineStyle = conn.isUtilityLink
-                                ? StrokeStyle(lineWidth: isSelected ? 4 : 3, dash: [8, 5])
-                                : StrokeStyle(lineWidth: isSelected ? 5 : 4)
+                                ? StrokeStyle(lineWidth: isGlowing ? 4 : (isSelected ? 4 : 3), dash: [8, 5])
+                                : StrokeStyle(lineWidth: isGlowing ? 6 : (isSelected ? 5 : 4))
                             ZStack {
+                                // Glow shadow layer
+                                if isGlowing {
+                                    ConnectionView(from: conn.from, to: conn.to, detourY: conn.detourY)
+                                        .stroke(glowTint.opacity(0.4), style: StrokeStyle(lineWidth: 12))
+                                        .blur(radius: 4)
+                                }
                                 // Visible line
                                 ConnectionView(from: conn.from, to: conn.to, detourY: conn.detourY)
                                     .stroke(lineColor, style: lineStyle)
@@ -74,6 +84,22 @@ struct PlaygroundView: View {
                             }
                         }
                         
+                        // Weight value labels (inspect mode)
+                        if canvasViewModel.inspectMode {
+                            ForEach(canvasViewModel.drawableConnections) { conn in
+                                if !conn.isUtilityLink {
+                                    let pos = bezierPoint(from: conn.from, to: conn.to, detourY: conn.detourY, t: 0.2)
+                                    Text(String(format: "%.2f", conn.value))
+                                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 2)
+                                        .background(.background.opacity(0.9), in: RoundedRectangle(cornerRadius: 3))
+                                        .position(pos)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                        }
+
                         if let wiring = canvasViewModel.temporaryWiringLine {
                             ConnectionView(from: wiring.from, to: wiring.to)
                                 .stroke(checkIfWiringIsInvalid() ? Color.red : Color.primary.opacity(0.4), lineWidth: 4)
@@ -109,24 +135,24 @@ struct PlaygroundView: View {
                 .coordinateSpace(name: "canvas")
                 .ignoresSafeArea()
                 // Weight floating card — positioned at tap location
-                .overlay {
-                    GeometryReader { overlayGeo in
-                        if let connId = canvasViewModel.selectedConnectionId,
-                           let tapGlobal = canvasViewModel.connectionTapGlobalLocation,
-                           let connection = canvasViewModel.connections.first(where: { $0.id == connId }) {
+                .overlay(alignment: .topLeading) {
+                    if let connId = canvasViewModel.selectedConnectionId,
+                       let tapGlobal = canvasViewModel.connectionTapGlobalLocation,
+                       let connection = canvasViewModel.connections.first(where: { $0.id == connId }) {
 
-                            let cardWidth: CGFloat = 240
-                            let cardHeight: CGFloat = 120
+                        GeometryReader { overlayGeo in
+                            let cardWidth: CGFloat = 260
                             let localX = tapGlobal.x - overlayGeo.frame(in: .global).minX
                             let localY = tapGlobal.y - overlayGeo.frame(in: .global).minY
-                            let clampedX = min(max(localX, cardWidth / 2 + 16), overlayGeo.size.width - cardWidth / 2 - 16)
-                            let clampedY = min(max(localY + 24, cardHeight / 2), overlayGeo.size.height - cardHeight / 2 - 16)
+                            let leftX = min(max(localX - cardWidth / 2, 16), overlayGeo.size.width - cardWidth - 16)
 
                             WeightPopoverView(viewModel: canvasViewModel, connection: connection)
                                 .glassEffect(in: .rect(cornerRadius: 16))
-                                .frame(width: cardWidth)
-                                .position(x: clampedX, y: clampedY)
-                                .transition(.scale(scale: 0.9).combined(with: .opacity))
+                                .frame(width: cardWidth, alignment: .top)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.leading, leftX)
+                                .padding(.top, localY + 16)
+                                .transition(.scale(scale: 0.9, anchor: .top).combined(with: .opacity))
                         }
                     }
                 }
@@ -188,6 +214,24 @@ struct PlaygroundView: View {
         .navigationSplitViewStyle(.automatic)
     }
     
+    /// Evaluate cubic bezier at parameter t, matching ConnectionView's control points.
+    private func bezierPoint(from: CGPoint, to: CGPoint, detourY: CGFloat?, t: CGFloat) -> CGPoint {
+        let c1: CGPoint
+        let c2: CGPoint
+        if let dy = detourY {
+            c1 = CGPoint(x: from.x, y: dy)
+            c2 = CGPoint(x: to.x, y: dy)
+        } else {
+            let cw = abs(to.x - from.x) * 0.5
+            c1 = CGPoint(x: from.x + cw, y: from.y)
+            c2 = CGPoint(x: to.x - cw, y: to.y)
+        }
+        let u = 1 - t
+        let x = u*u*u*from.x + 3*u*u*t*c1.x + 3*u*t*t*c2.x + t*t*t*to.x
+        let y = u*u*u*from.y + 3*u*u*t*c1.y + 3*u*t*t*c2.y + t*t*t*to.y
+        return CGPoint(x: x, y: y)
+    }
+
     private func checkIfWiringIsInvalid() -> Bool {
         guard let sourceId = canvasViewModel.activeWiringSource,
               let targetPos = canvasViewModel.wiringTargetPosition,
@@ -260,6 +304,9 @@ struct ComponentItemView: View {
 
 struct PlaygroundView_Previews: PreviewProvider {
     static var previews: some View {
-        PlaygroundView().environmentObject(CanvasViewModel()).previewInterfaceOrientation(.landscapeLeft)
+        PlaygroundView()
+            .environmentObject(CanvasViewModel())
+            .preferredColorScheme(.dark)
+            .previewInterfaceOrientation(.landscapeLeft)
     }
 }
