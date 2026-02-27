@@ -72,7 +72,7 @@ struct NeuronNodeView: View {
                         .onDisappear { viewModel.clearGlow() }
                 }
 
-            if viewModel.canvasMode != .inference {
+            if viewModel.canvasMode != .inference || node.isOutput {
                 Circle()
                     .fill(Color.white)
                     .frame(width: 18, height: 18)
