@@ -3,6 +3,7 @@ import SwiftUI
 struct PlaygroundView: View {
     @EnvironmentObject var canvasViewModel: CanvasViewModel
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
+    @State private var isShowingClearConfirm = false
     var onDismiss: (() -> Void)? = nil
 
     private var isInference: Bool { canvasViewModel.canvasMode == .inference }
@@ -24,9 +25,11 @@ struct PlaygroundView: View {
                     )
                     .background(Color(UIColor.systemBackground))
                     .onTapGesture {
-                        canvasViewModel.selectedConnectionId = nil
-                        canvasViewModel.connectionTapGlobalLocation = nil
-                        canvasViewModel.clearGlow()
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                            canvasViewModel.selectedConnectionId = nil
+                            canvasViewModel.connectionTapGlobalLocation = nil
+                            canvasViewModel.clearGlow()
+                        }
                     }
 
                     ZStack {
@@ -46,11 +49,13 @@ struct PlaygroundView: View {
                                 ? StrokeStyle(lineWidth: isGlowing ? 4 : (isSelected ? 4 : 3), dash: [8, 5])
                                 : StrokeStyle(lineWidth: isGlowing ? 6 : (isSelected ? 5 : 4))
                             ZStack {
-                                if isGlowing {
-                                    ConnectionView(from: conn.from, to: conn.to, detourY: conn.detourY)
-                                        .stroke(glowTint.opacity(0.4), style: StrokeStyle(lineWidth: 12))
-                                        .blur(radius: 4)
-                                }
+                                // Glow layer (always present, opacity animated)
+                                ConnectionView(from: conn.from, to: conn.to, detourY: conn.detourY)
+                                    .stroke(glowTint, style: StrokeStyle(lineWidth: 12))
+                                    .blur(radius: 4)
+                                    .opacity(isGlowing ? 0.4 : 0.0)
+
+                                // Main line
                                 ConnectionView(from: conn.from, to: conn.to, detourY: conn.detourY)
                                     .stroke(lineColor, style: lineStyle)
                                     .animation(.easeInOut(duration: 0.4), value: conn.value)
@@ -60,19 +65,22 @@ struct PlaygroundView: View {
                                         .fill(Color.white.opacity(0.001))
                                         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
                                             .onEnded { value in
-                                                if conn.isUtilityLink {
-                                                    let newId = canvasViewModel.selectedConnectionId == conn.id ? nil : conn.id
-                                                    canvasViewModel.selectedConnectionId = newId
-                                                    canvasViewModel.connectionTapGlobalLocation = nil
-                                                } else {
-                                                    let newId = canvasViewModel.selectedConnectionId == conn.id ? nil : conn.id
-                                                    canvasViewModel.selectedConnectionId = newId
-                                                    canvasViewModel.connectionTapGlobalLocation = newId != nil ? value.location : nil
+                                                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                                                    if conn.isUtilityLink {
+                                                        let newId = canvasViewModel.selectedConnectionId == conn.id ? nil : conn.id
+                                                        canvasViewModel.selectedConnectionId = newId
+                                                        canvasViewModel.connectionTapGlobalLocation = nil
+                                                    } else {
+                                                        let newId = canvasViewModel.selectedConnectionId == conn.id ? nil : conn.id
+                                                        canvasViewModel.selectedConnectionId = newId
+                                                        canvasViewModel.connectionTapGlobalLocation = newId != nil ? value.location : nil
+                                                    }
                                                 }
                                             }
                                         )
                                 }
                             }
+                            .animation(.easeIn(duration: 0.15), value: isGlowing)
                         }
 
                         if canvasViewModel.inspectMode {
@@ -109,8 +117,10 @@ struct PlaygroundView: View {
                             let mid = CGPoint(x: (conn.from.x + conn.to.x) / 2,
                                               y: conn.detourY ?? (conn.from.y + conn.to.y) / 2)
                             Button {
-                                canvasViewModel.selectedConnectionId = nil
-                                canvasViewModel.deleteConnection(id: connId)
+                                withAnimation {
+                                    canvasViewModel.selectedConnectionId = nil
+                                    canvasViewModel.deleteConnection(id: connId)
+                                }
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.system(size: 22))
@@ -175,6 +185,18 @@ struct PlaygroundView: View {
                                     .glassEffect(in: .circle)
                             }
                             .buttonStyle(.plain)
+
+                            Button(role: .destructive) {
+                                isShowingClearConfirm = true
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.title2)
+                                    .foregroundStyle(.red)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Circle())
+                                    .glassEffect(in: .circle)
+                            }
+                            .buttonStyle(.plain)
                         }
 
                         Button { canvasViewModel.fitToScreen(in: geometry.size, insets: geometry.safeAreaInsets) } label: {
@@ -229,6 +251,14 @@ struct PlaygroundView: View {
             }
         }
         .navigationSplitViewStyle(.automatic)
+        .alert("Clear Canvas?", isPresented: $isShowingClearConfirm) {
+            Button("Clear", role: .destructive) {
+                canvasViewModel.clearCanvas()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This will delete all nodes and connections. This action cannot be undone.")
+        }
     }
 
     // MARK: - Mode Switcher
@@ -264,33 +294,8 @@ struct PlaygroundView: View {
             let nnTypes: [NodeViewModel.NodeType] = [.neuron, .dataset, .loss, .visualization]
             let utilTypes: [NodeViewModel.NodeType] = [.outputDisplay, .annotation]
 
-            Section("Neural Network") {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 16)], spacing: 12) {
-                    ForEach(nnTypes, id: \.self) { type in
-                        ComponentItemView(type: type)
-                            .onTapGesture {
-                                canvasViewModel.addNode(type: type, at: CGPoint(x: 400, y: 300))
-                            }
-                    }
-                }
-                .padding(.vertical, 8)
-            }
-            .padding(12)
-            .listRowInsets(EdgeInsets())
-
-            Section("Utilities") {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 16)], spacing: 12) {
-                    ForEach(utilTypes, id: \.self) { type in
-                        ComponentItemView(type: type)
-                            .onTapGesture {
-                                canvasViewModel.addNode(type: type, at: CGPoint(x: 400, y: 300))
-                            }
-                    }
-                }
-                .padding(.vertical, 8)
-            }
-            .padding(12)
-            .listRowInsets(EdgeInsets())
+            componentSection(title: "Neural Network", types: nnTypes)
+            componentSection(title: "Utilities", types: utilTypes)
         }
     }
 
@@ -298,21 +303,26 @@ struct PlaygroundView: View {
 
     private var inferenceSidebarContent: some View {
         List {
-            Section("Utilities") {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 16)], spacing: 12) {
-                    let utilTypes: [NodeViewModel.NodeType] = [.outputDisplay, .annotation]
-                    ForEach(utilTypes, id: \.self) { type in
-                        ComponentItemView(type: type)
-                            .onTapGesture {
-                                canvasViewModel.addNode(type: type, at: CGPoint(x: 400, y: 300))
-                            }
-                    }
-                }
-                .padding(.vertical, 8)
-            }
-            .padding(12)
-            .listRowInsets(EdgeInsets())
+            let utilTypes: [NodeViewModel.NodeType] = [.outputDisplay, .annotation]
+            componentSection(title: "Utilities", types: utilTypes)
         }
+    }
+
+    @ViewBuilder
+    private func componentSection(title: String, types: [NodeViewModel.NodeType]) -> some View {
+        Section(title) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 16)], spacing: 12) {
+                ForEach(types, id: \.self) { type in
+                    ComponentItemView(type: type)
+                        .onTapGesture {
+                            canvasViewModel.addNode(type: type, at: CGPoint(x: 400, y: 300))
+                        }
+                }
+            }
+            .padding(.vertical, 8)
+        }
+        .padding(12)
+        .listRowInsets(EdgeInsets())
     }
 
     // MARK: - Helpers
