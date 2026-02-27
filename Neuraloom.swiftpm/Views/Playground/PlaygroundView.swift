@@ -21,7 +21,7 @@ struct PlaygroundView: View {
                     DotGridView(
                         scale: canvasViewModel.scale,
                         offset: canvasViewModel.offset,
-                        dotSpacing: 20
+                        dotSpacing: 30
                     )
                     .background(Color(UIColor.systemBackground))
                     .onTapGesture {
@@ -60,21 +60,15 @@ struct PlaygroundView: View {
                                     .stroke(lineColor, style: lineStyle)
                                     .animation(.easeInOut(duration: 0.4), value: conn.value)
 
-                                if !isInference {
+                                if !isInference || !conn.isUtilityLink {
                                     ConnectionHitArea(from: conn.from, to: conn.to, detourY: conn.detourY)
                                         .fill(Color.white.opacity(0.001))
                                         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
                                             .onEnded { value in
                                                 withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                                                    if conn.isUtilityLink {
-                                                        let newId = canvasViewModel.selectedConnectionId == conn.id ? nil : conn.id
-                                                        canvasViewModel.selectedConnectionId = newId
-                                                        canvasViewModel.connectionTapGlobalLocation = nil
-                                                    } else {
-                                                        let newId = canvasViewModel.selectedConnectionId == conn.id ? nil : conn.id
-                                                        canvasViewModel.selectedConnectionId = newId
-                                                        canvasViewModel.connectionTapGlobalLocation = newId != nil ? value.location : nil
-                                                    }
+                                                    let newId = canvasViewModel.selectedConnectionId == conn.id ? nil : conn.id
+                                                    canvasViewModel.selectedConnectionId = newId
+                                                    canvasViewModel.connectionTapGlobalLocation = conn.isUtilityLink ? nil : (newId != nil ? value.location : nil)
                                                 }
                                             }
                                         )
@@ -99,7 +93,7 @@ struct PlaygroundView: View {
                             }
                         }
 
-                        if !isInference, let wiring = canvasViewModel.temporaryWiringLine {
+                        if let wiring = canvasViewModel.temporaryWiringLine {
                             ConnectionView(from: wiring.from, to: wiring.to)
                                 .stroke(checkIfWiringIsInvalid() ? Color.red : Color.primary.opacity(0.4), lineWidth: 4)
                                 .opacity(0.6)
@@ -108,6 +102,7 @@ struct PlaygroundView: View {
                         let displayNodes = isInference ? canvasViewModel.visibleNodes : canvasViewModel.nodes
                         ForEach(displayNodes) { node in
                             CanvasNodeView(viewModel: canvasViewModel, node: node)
+                                .transition(.opacity)
                         }
 
                         if !isInference,
@@ -133,12 +128,12 @@ struct PlaygroundView: View {
                     }
                     .scaleEffect(canvasViewModel.scale, anchor: .topLeading)
                     .offset(canvasViewModel.offset)
+                    .opacity(canvasViewModel.canvasOpacity)
                 }
                 .coordinateSpace(name: "canvas")
                 .ignoresSafeArea()
                 .overlay(alignment: .topLeading) {
-                    if !isInference,
-                       let connId = canvasViewModel.selectedConnectionId,
+                    if let connId = canvasViewModel.selectedConnectionId,
                        let tapGlobal = canvasViewModel.connectionTapGlobalLocation,
                        let connection = canvasViewModel.connections.first(where: { $0.id == connId }) {
 
@@ -292,7 +287,7 @@ struct PlaygroundView: View {
     private var sidebarContent: some View {
         List {
             let nnTypes: [NodeViewModel.NodeType] = [.neuron, .dataset, .loss, .visualization]
-            let utilTypes: [NodeViewModel.NodeType] = [.outputDisplay, .annotation]
+            let utilTypes: [NodeViewModel.NodeType] = [.outputDisplay, .number, .annotation]
 
             componentSection(title: "Neural Network", types: nnTypes)
             componentSection(title: "Utilities", types: utilTypes)
@@ -303,7 +298,9 @@ struct PlaygroundView: View {
 
     private var inferenceSidebarContent: some View {
         List {
-            let utilTypes: [NodeViewModel.NodeType] = [.outputDisplay, .annotation]
+            let analysisTypes: [NodeViewModel.NodeType] = [.loss]
+            let utilTypes: [NodeViewModel.NodeType] = [.outputDisplay, .number, .annotation]
+            componentSection(title: "Analysis", types: analysisTypes)
             componentSection(title: "Utilities", types: utilTypes)
         }
     }
@@ -368,6 +365,8 @@ struct CanvasNodeView: View {
             LossNodeView(viewModel: viewModel, node: node)
         case .outputDisplay:
             OutputDisplayNodeView(viewModel: viewModel, node: node)
+        case .number:
+            NumberNodeView(viewModel: viewModel, node: node)
         case .annotation:
             AnnotationNodeView(viewModel: viewModel, node: node)
         default:
@@ -408,6 +407,11 @@ struct ComponentItemView: View {
                     .fill(Color.green)
                     .frame(width: 40, height: 40)
                     .overlay(Image(systemName: "eye.circle.fill").foregroundColor(.white))
+            case .number:
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.teal)
+                    .frame(width: 40, height: 40)
+                    .overlay(Text("1.0").font(.caption2.bold()).foregroundColor(.white))
             case .annotation:
                 Image(systemName: "note.text")
                     .font(.largeTitle)

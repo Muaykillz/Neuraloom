@@ -4,8 +4,11 @@ struct WeightPopoverView: View {
     @ObservedObject var viewModel: CanvasViewModel
     let connection: ConnectionViewModel
     @State private var editingValue: String = ""
+    @State private var sliderValue: Double = 0.0
     @State private var gradientExpanded = false
     @FocusState private var fieldFocused: Bool
+
+    private var isInference: Bool { viewModel.canvasMode == .inference }
 
     /// Always read live from the viewModel array — never stale
     private var liveConn: ConnectionViewModel {
@@ -29,15 +32,17 @@ struct WeightPopoverView: View {
                 Text("Weight")
                     .font(.headline)
                 Spacer()
-                Button(role: .destructive) {
-                    viewModel.clearGlow()
-                    viewModel.selectedConnectionId = nil
-                    viewModel.deleteConnection(id: connection.id)
-                } label: {
-                    Image(systemName: "trash")
-                        .foregroundStyle(.red)
+                if !isInference {
+                    Button(role: .destructive) {
+                        viewModel.clearGlow()
+                        viewModel.selectedConnectionId = nil
+                        viewModel.deleteConnection(id: connection.id)
+                    } label: {
+                        Image(systemName: "trash")
+                            .foregroundStyle(.red)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
                 Button {
                     viewModel.clearGlow()
@@ -66,36 +71,55 @@ struct WeightPopoverView: View {
                     .onChange(of: editingValue) { _, v in
                         if let d = Double(v) {
                             viewModel.updateConnectionValue(id: connection.id, value: d)
+                            if isInference { sliderValue = d }
                         }
                     }
                     .onChange(of: conn.value) { _, newVal in
                         if !fieldFocused {
                             editingValue = String(format: "%.4f", newVal)
                         }
+                        if isInference { sliderValue = newVal }
                     }
                     .onAppear {
                         editingValue = String(format: "%.4f", conn.value)
+                        sliderValue = conn.value
                     }
             }
 
-            if viewModel.inspectMode && viewModel.stepPhase != .forward {
-                inspectSection(conn: conn)
-
-                HStack(spacing: 4) {
-                    Image(systemName: "hand.tap")
-                        .font(.system(size: 9))
-                    Text("Tap boxed values to highlight their source on canvas")
-                        .font(.system(size: 9))
+            if isInference {
+                HStack(spacing: 8) {
+                    Text(String(format: "%.2f", sliderValue))
+                        .font(.caption.monospaced())
+                        .frame(width: 44)
+                    Slider(value: $sliderValue, in: -3...3, step: 0.01)
+                        .tint(.orange)
+                        .onChange(of: sliderValue) { _, newVal in
+                            editingValue = String(format: "%.4f", newVal)
+                            viewModel.updateConnectionValue(id: connection.id, value: newVal)
+                        }
                 }
-                .foregroundStyle(.tertiary)
-            } else if !viewModel.inspectMode {
-                HStack {
-                    Text("Gradient")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(compactFmt(conn.gradient))
-                        .fontDesign(.monospaced)
-                        .foregroundStyle(.secondary)
+            }
+
+            if !isInference {
+                if viewModel.inspectMode && viewModel.stepPhase != .forward {
+                    inspectSection(conn: conn)
+
+                    HStack(spacing: 4) {
+                        Image(systemName: "hand.tap")
+                            .font(.system(size: 9))
+                        Text("Tap boxed values to highlight their source on canvas")
+                            .font(.system(size: 9))
+                    }
+                    .foregroundStyle(.tertiary)
+                } else if !viewModel.inspectMode {
+                    HStack {
+                        Text("Gradient")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(compactFmt(conn.gradient))
+                            .fontDesign(.monospaced)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
@@ -169,21 +193,13 @@ struct WeightPopoverView: View {
 
     private var targetNodeColor: Color {
         guard let t = targetNode else { return .orange }
-        return nodeColor(for: t)
-    }
-
-    private var sourceNodeColor: Color {
-        guard let s = sourceNode else { return .orange }
-        return nodeColor(for: s)
-    }
-
-    private func nodeColor(for node: NodeViewModel) -> Color {
-        switch node.type {
+        switch t.type {
         case .neuron:        return .orange
         case .dataset:       return .blue
         case .loss:          return .red
         case .visualization: return .purple
         case .outputDisplay: return .green
+        case .number:        return .teal
         case .annotation:    return .gray
         }
     }
