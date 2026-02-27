@@ -9,17 +9,24 @@ struct InferencePanelView: View {
                 viewModel.runInference()
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "play.fill")
-                        .font(.caption)
-                    Text("Predict")
-                        .font(.subheadline.bold())
+                    if viewModel.isPredicting {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: "play.fill")
+                            .font(.caption)
+                        Text("Predict")
+                            .font(.subheadline.bold())
+                    }
                 }
                 .foregroundStyle(.white)
+                .frame(width: 80, height: 20)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
-                .background(Color.green, in: Capsule())
+                .background(Color.green.opacity(viewModel.isPredicting ? 0.7 : 1.0), in: Capsule())
             }
             .buttonStyle(.plain)
+            .disabled(viewModel.isPredicting)
 
             if !viewModel.inferenceOutputNodeIds.isEmpty {
                 Divider().frame(height: 20)
