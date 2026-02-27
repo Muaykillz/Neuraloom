@@ -18,6 +18,13 @@ enum NodeRole: String, CaseIterable {
     case bias   = "Bias"
 }
 
+// MARK: - Inference Input Source
+
+enum InferenceInputSource: String, CaseIterable {
+    case manual  = "Manual"
+    case dataset = "Dataset"
+}
+
 // MARK: - Inference Input Info
 
 struct InferenceInputInfo: Identifiable {
@@ -36,6 +43,7 @@ struct NodeViewModel: Identifiable {
         case loss = "Loss"
         case visualization = "Viz"
         case outputDisplay = "Result"
+        case number = "Number"
         case annotation = "Note"
 
         var icon: String {
@@ -45,6 +53,7 @@ struct NodeViewModel: Identifiable {
             case .loss:          return "target"
             case .visualization: return "chart.line.uptrend.xyaxis"
             case .outputDisplay: return "eye.circle.fill"
+            case .number:        return "number"
             case .annotation:    return "note.text"
             }
         }
@@ -59,6 +68,7 @@ struct NodeViewModel: Identifiable {
     var lossConfig: LossNodeConfig?
     var outputDisplayValue: Double?
     var annotationText: String = "Note"
+    var numberValue: Double = 0.0
 
     var isInput: Bool { role == .input }
     var isOutput: Bool { role == .output }
