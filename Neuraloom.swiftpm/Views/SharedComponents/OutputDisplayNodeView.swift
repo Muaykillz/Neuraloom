@@ -52,7 +52,21 @@ struct OutputDisplayNodeView: View {
         }
         .position(node.position)
         .onTapGesture {
-            viewModel.selectedNodeId = (viewModel.selectedNodeId == node.id) ? nil : node.id
+            if let incomingConn = viewModel.connections.first(where: { $0.targetNodeId == node.id }) {
+                let sourceNodeId = incomingConn.sourceNodeId
+                
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    // If the source node is already selected, tapping again should deselect and clear glow.
+                    if viewModel.selectedNodeId == sourceNodeId {
+                        viewModel.selectedNodeId = nil
+                        viewModel.clearGlow()
+                    } else {
+                        // Otherwise, glow the connection/source node and select it to show the popover.
+                        viewModel.toggleGlow(nodeIds: [sourceNodeId], connectionIds: [incomingConn.id])
+                        viewModel.selectedNodeId = sourceNodeId
+                    }
+                }
+            }
         }
         .gesture(
             DragGesture(coordinateSpace: .named("canvas"))
