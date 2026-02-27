@@ -263,10 +263,6 @@ struct NodePopoverView: View {
 
     // MARK: - Helpers
 
-    private func fmt(_ v: Double) -> String {
-        compactFmt(v)
-    }
-
     private func activationName(_ act: ActivationType) -> String {
         switch act {
         case .relu:    return "relu"
@@ -481,15 +477,15 @@ struct LossComputationView: View {
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        ConceptBoxView(value: fmt(loss), label: "L", tint: .red)
+                        ConceptBoxView(value: compactFmt(loss), label: "L", tint: .red)
                         ConceptOperator(symbol: "=")
-                        ConceptBoxView(value: fmt(vals.yHat), label: "\u{0177}", tint: .orange) {
+                        ConceptBoxView(value: compactFmt(vals.yHat), label: "\u{0177}", tint: .orange) {
                             var connIds: Set<UUID> = []
                             if let pc = predConn { connIds.insert(pc.id) }
                             viewModel.toggleGlow(nodeIds: [vals.predId], connectionIds: connIds)
                         }
                         ConceptOperator(symbol: "\u{2212}")
-                        ConceptBoxView(value: fmt(vals.target), label: "y", tint: .blue) {
+                        ConceptBoxView(value: compactFmt(vals.target), label: "y", tint: .blue) {
                             let dsNodes = viewModel.nodes.filter { $0.type == .dataset }
                             var connIds: Set<UUID> = []
                             if let tc = trueConn { connIds.insert(tc.id) }
@@ -499,10 +495,6 @@ struct LossComputationView: View {
                 }
             }
         }
-    }
-
-    private func fmt(_ v: Double) -> String {
-        compactFmt(v)
     }
 }
 
@@ -564,7 +556,7 @@ struct DeltaSectionView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 if let d = deltaVal {
-                    ConceptBoxView(value: fmt(d), label: "\u{03B4}", tint: .orange) {
+                    ConceptBoxView(value: compactFmt(d), label: "\u{03B4}", tint: .orange) {
                         viewModel.toggleGlow(nodeIds: [node.id])
                     }
                     ConceptOperator(symbol: "=")
@@ -576,7 +568,7 @@ struct DeltaSectionView: View {
                 ConceptOperator(symbol: "\u{00D7}")
 
                 // f'(net) — expandable
-                ConceptBoxView(value: fmt(fPrimeVal), label: "f\u{2032}(net)", tint: .orange) {
+                ConceptBoxView(value: compactFmt(fPrimeVal), label: "f\u{2032}(net)", tint: .orange) {
                     viewModel.toggleGlow(nodeIds: [node.id])
                     withAnimation(.easeInOut(duration: 0.25)) { fPrimeExpanded.toggle() }
                 }
@@ -593,7 +585,7 @@ struct DeltaSectionView: View {
     @ViewBuilder
     private func dLdaConceptBox(g: Double) -> some View {
         let tint: Color = n.role == .output ? .red : downstreamColor
-        ConceptBoxView(value: fmt(g), label: "\u{2202}L/\u{2202}a", tint: tint) {
+        ConceptBoxView(value: compactFmt(g), label: "\u{2202}L/\u{2202}a", tint: tint) {
             if n.role == .output {
                 let lossNodes = viewModel.nodes.filter { $0.type == .loss }
                 let outgoing = viewModel.connections.filter { $0.sourceNodeId == node.id }
@@ -630,10 +622,6 @@ struct DeltaSectionView: View {
         case .outputDisplay: return .green
         case .annotation:    return .gray
         }
-    }
-
-    private func fmt(_ v: Double) -> String {
-        compactFmt(v)
     }
 }
 
@@ -672,18 +660,18 @@ struct DLdaBreakdownView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ConceptBoxView(value: fmt(dLda), label: "\u{2202}L/\u{2202}a", tint: .red) {
+                    ConceptBoxView(value: compactFmt(dLda), label: "\u{2202}L/\u{2202}a", tint: .red) {
                         let lossNodes = viewModel.nodes.filter { $0.type == .loss }
                         viewModel.toggleGlow(nodeIds: Set(lossNodes.map(\.id)))
                     }
                     ConceptOperator(symbol: "=")
                     ConceptBoxView(value: "2", label: "", tint: .gray)
                     ConceptOperator(symbol: "\u{00D7}")
-                    ConceptBoxView(value: fmt(output), label: "\u{0177}", tint: .orange) {
+                    ConceptBoxView(value: compactFmt(output), label: "\u{0177}", tint: .orange) {
                         viewModel.toggleGlow(nodeIds: [node.id])
                     }
                     ConceptOperator(symbol: "\u{2212}")
-                    ConceptBoxView(value: fmt(target), label: "y", tint: .blue) {
+                    ConceptBoxView(value: compactFmt(target), label: "y", tint: .blue) {
                         let dsNodes = viewModel.nodes.filter { $0.type == .dataset }
                         viewModel.toggleGlow(nodeIds: Set(dsNodes.map(\.id)))
                     }
@@ -702,15 +690,15 @@ struct DLdaBreakdownView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ConceptBoxView(value: fmt(dLda), label: "\u{2202}L/\u{2202}a", tint: .red) {
+                    ConceptBoxView(value: compactFmt(dLda), label: "\u{2202}L/\u{2202}a", tint: .red) {
                         let lossNodes = viewModel.nodes.filter { $0.type == .loss }
                         viewModel.toggleGlow(nodeIds: Set(lossNodes.map(\.id)))
                     }
                     ConceptOperator(symbol: "=")
-                    ConceptBoxView(value: fmt(output - target), label: "\u{0177}\u{2212}y", tint: .orange)
+                    ConceptBoxView(value: compactFmt(output - target), label: "\u{0177}\u{2212}y", tint: .orange)
                     ConceptOperator(symbol: "\u{00F7}")
                     ConceptBoxView(
-                        value: fmt(pClamped * (1.0 - pClamped)),
+                        value: compactFmt(pClamped * (1.0 - pClamped)),
                         label: "\u{0177}(1\u{2212}\u{0177})",
                         tint: .orange
                     )
@@ -742,13 +730,9 @@ struct DLdaBreakdownView: View {
             HiddenTermRow(viewModel: viewModel, conn: conn)
         }
 
-        Text(String(format: "\u{03A3} = %@", fmt(dLda)))
+        Text(String(format: "\u{03A3} = %@", compactFmt(dLda)))
             .font(.system(size: 10, weight: .medium, design: .monospaced))
             .foregroundStyle(.orange)
-    }
-
-    private func fmt(_ v: Double) -> String {
-        compactFmt(v)
     }
 }
 
@@ -770,14 +754,10 @@ struct HiddenTermRow: View {
 
         if let delta = tgtDelta {
             Text(String(format: "%@ \u{00D7} %@ = %@",
-                        fmt(conn.value), fmt(delta), fmt(conn.value * delta)))
+                        compactFmt(conn.value), compactFmt(delta), compactFmt(conn.value * delta)))
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(.secondary)
         }
-    }
-
-    private func fmt(_ v: Double) -> String {
-        compactFmt(v)
     }
 }
 
@@ -831,13 +811,13 @@ struct FPrimeBreakdownView: View {
 
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ConceptBoxView(value: fmt(fPrimeVal), label: "f\u{2032}(net)", tint: .orange)
+                ConceptBoxView(value: compactFmt(fPrimeVal), label: "f\u{2032}(net)", tint: .orange)
                 ConceptOperator(symbol: "=")
-                ConceptBoxView(value: fmt(output), label: "out", tint: .orange) {
+                ConceptBoxView(value: compactFmt(output), label: "out", tint: .orange) {
                     viewModel.toggleGlow(nodeIds: [nodeId])
                 }
                 ConceptOperator(symbol: "\u{00D7}")
-                ConceptBoxView(value: fmt(1.0 - output), label: "1\u{2212}out", tint: .orange)
+                ConceptBoxView(value: compactFmt(1.0 - output), label: "1\u{2212}out", tint: .orange)
             }
         }
     }
@@ -849,12 +829,8 @@ struct FPrimeBreakdownView: View {
             .foregroundStyle(.secondary)
 
         Text(String(format: "out = %@ \u{2192} f\u{2032} = %@",
-                    fmt(output), output > 0 ? "1" : "0"))
+                    compactFmt(output), output > 0 ? "1" : "0"))
             .font(.system(size: 10, weight: .medium, design: .monospaced))
             .foregroundStyle(.orange)
-    }
-
-    private func fmt(_ v: Double) -> String {
-        compactFmt(v)
     }
 }

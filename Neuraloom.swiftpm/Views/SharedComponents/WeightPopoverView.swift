@@ -93,7 +93,7 @@ struct WeightPopoverView: View {
                     Text("Gradient")
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(fmt(conn.gradient))
+                    Text(compactFmt(conn.gradient))
                         .fontDesign(.monospaced)
                         .foregroundStyle(.secondary)
                 }
@@ -138,13 +138,13 @@ struct WeightPopoverView: View {
 
             // Concept boxes — wrapping
             WrappingHStack(spacing: 4) {
-                ConceptBoxView(value: fmt(wOld + delta), label: "w\u{2099}", tint: .orange)
+                ConceptBoxView(value: compactFmt(wOld + delta), label: "w\u{2099}", tint: .orange)
                 ConceptOperator(symbol: "=")
-                ConceptBoxView(value: fmt(wOld), label: "w", tint: .orange)
+                ConceptBoxView(value: compactFmt(wOld), label: "w", tint: .orange)
                 ConceptOperator(symbol: "\u{2212}")
-                ConceptBoxView(value: fmt(lr), label: "lr", tint: .gray)
+                ConceptBoxView(value: compactFmt(lr), label: "lr", tint: .gray)
                 ConceptOperator(symbol: "\u{00D7}")
-                ConceptBoxView(value: fmt(grad), label: "\u{2202}L/\u{2202}w", tint: targetNodeColor) {
+                ConceptBoxView(value: compactFmt(grad), label: "\u{2202}L/\u{2202}w", tint: targetNodeColor) {
                     withAnimation(.easeInOut(duration: 0.25)) {
                         gradientExpanded.toggle()
                     }
@@ -166,10 +166,6 @@ struct WeightPopoverView: View {
     }
 
     // MARK: - Helpers
-
-    private func fmt(_ v: Double) -> String {
-        compactFmt(v)
-    }
 
     private var targetNodeColor: Color {
         guard let t = targetNode else { return .orange }
