@@ -30,9 +30,9 @@ struct DotGridView: View {
                     }
                 }
             }
-            .fill(Color.primary.opacity(0.16)) // Adapt to dark/light mode
+            .fill(Color.primary.opacity(0.12))
             .frame(width: geometry.size.width, height: geometry.size.height)
-            .clipped() // Ensure dots don't draw outside bounds
+            .clipped()
         }
     }
 }

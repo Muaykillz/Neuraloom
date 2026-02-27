@@ -68,6 +68,7 @@ extension CanvasViewModel {
         case .loss:          return CGPoint(x: p.x + 60, y: p.y)
         case .visualization: return CGPoint(x: p.x + 109, y: p.y)
         case .outputDisplay: return CGPoint(x: p.x + 70, y: p.y)
+        case .number:        return CGPoint(x: p.x + 50, y: p.y)
         default:             return p
         }
     }
@@ -79,6 +80,7 @@ extension CanvasViewModel {
         case .loss:          return CGPoint(x: p.x - 63, y: p.y)
         case .visualization: return CGPoint(x: p.x - 109, y: p.y)
         case .outputDisplay: return CGPoint(x: p.x - 70, y: p.y)
+        case .number:        return CGPoint(x: p.x - 50, y: p.y)
         default:             return p
         }
     }
@@ -104,7 +106,7 @@ extension CanvasViewModel {
         for node in nodes where node.type == .dataset {
             guard let config = node.datasetConfig else { continue }
             if let ci = config.columnPortIds.firstIndex(of: portId) {
-                if canvasMode == .inference {
+                if canvasMode == .inference && inferenceInputSource == .manual {
                     let inputCount = config.preset.inputColumnCount
                     guard ci < inputCount else { return nil }
                     return DatasetNodeLayout.portPosition(

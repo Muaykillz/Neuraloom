@@ -11,9 +11,23 @@ struct OutputDisplayNodeView: View {
     var body: some View {
         ZStack {
             VStack(spacing: 8) {
-                Text("Result")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Text("Result")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        viewModel.deleteNode(id: node.id)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.tertiary)
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 Text(String(format: "%.4f", displayValue))
                     .font(.system(size: 22, weight: .bold, design: .monospaced))

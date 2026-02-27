@@ -82,7 +82,7 @@ struct NodePopoverView: View {
                     Text("Current Loss (L)")
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(String(format: "%.6f", loss))
+                    Text(String(format: "%.4f", loss))
                         .font(.caption.monospaced().bold())
                 }
 
@@ -110,7 +110,7 @@ struct NodePopoverView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(String(format: "%.6f", loss))
+                    Text(String(format: "%.4f", loss))
                         .font(.caption.monospaced().bold())
                 }
             }
@@ -134,7 +134,7 @@ struct NodePopoverView: View {
                     Text("Output")
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(String(format: "%.6f", output))
+                    Text(String(format: "%.4f", output))
                         .font(.caption.monospaced().bold())
                 }
 
@@ -144,8 +144,8 @@ struct NodePopoverView: View {
                 }
             }
 
-            // Error Signal (δ) section — only after backward pass
-            if n.role != .bias && viewModel.stepPhase != .forward {
+            // Error Signal (δ) section — only after backward pass, not in inference
+            if n.role != .bias && viewModel.stepPhase != .forward && viewModel.canvasMode != .inference {
                 DeltaSectionView(viewModel: viewModel, node: node, n: n, output: output)
             }
 
@@ -342,6 +342,7 @@ struct ForwardTermBox: View {
         case .loss:          return .red
         case .visualization: return .purple
         case .outputDisplay: return .green
+        case .number:        return .teal
         case .annotation:    return .gray
         }
     }
@@ -524,7 +525,7 @@ struct DeltaSectionView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 if let d = deltaVal {
-                    Text(String(format: "%.6f", d))
+                    Text(String(format: "%.4f", d))
                         .font(.caption.monospaced().bold())
                 }
             }
@@ -620,6 +621,7 @@ struct DeltaSectionView: View {
         case .loss:          return .red
         case .visualization: return .purple
         case .outputDisplay: return .green
+        case .number:        return .teal
         case .annotation:    return .gray
         }
     }

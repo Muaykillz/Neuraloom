@@ -48,7 +48,12 @@ class CanvasViewModel: ObservableObject {
     @Published var inferenceInputInfos: [InferenceInputInfo] = []
     @Published var inferenceOutputNodeIds: [UUID] = []
     @Published var autoOutputDisplayIds: [UUID] = []
+    var inferenceTemporaryNodeIds: Set<UUID> = []
+    var inferenceTemporaryConnectionIds: Set<UUID> = []
     @Published var isPredicting = false
+    @Published var canvasOpacity: Double = 1.0
+    @Published var inferenceInputSource: InferenceInputSource = .manual
+    @Published var inferenceDatasetRowIndex: Int = 0
     var savedPlaygroundMode: PlaygroundMode = .dev
     var savedSelectedNodeId: UUID?
     var savedSelectedConnectionId: UUID?

@@ -27,19 +27,23 @@ extension CanvasViewModel {
         previousTranslation = .zero
     }
 
+    private static let minScale: CGFloat = 0.3
+    private static let maxScale: CGFloat = 5.0
+
     func handleZoom(magnification: CGFloat, anchor: CGPoint) {
         let delta = magnification / lastMagnification
         lastMagnification = magnification
 
-        let newScale = scale * delta
-        offset.width = anchor.x - (anchor.x - offset.width) * delta
-        offset.height = anchor.y - (anchor.y - offset.height) * delta
+        let newScale = min(max(scale * delta, Self.minScale), Self.maxScale)
+        let actualDelta = newScale / scale
+        offset.width = anchor.x - (anchor.x - offset.width) * actualDelta
+        offset.height = anchor.y - (anchor.y - offset.height) * actualDelta
         scale = newScale
     }
 
     func endZoom(magnification: CGFloat, anchor: CGPoint) {
         lastMagnification = 1.0
-        let targetScale = min(max(scale, 0.2), 5.0)
+        let targetScale = min(max(scale, Self.minScale), Self.maxScale)
         if targetScale != scale {
             let delta = targetScale / scale
             withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
@@ -120,6 +124,8 @@ extension CanvasViewModel {
                           width: DatasetNodeLayout.width + 50, height: h + 20)
         case .outputDisplay:
             return CGRect(x: p.x - 80, y: p.y - 50, width: 160, height: 100)
+        case .number:
+            return CGRect(x: p.x - 60, y: p.y - 40, width: 120, height: 80)
         case .annotation:
             return CGRect(x: p.x - 70, y: p.y - 18, width: 140, height: 36)
         }

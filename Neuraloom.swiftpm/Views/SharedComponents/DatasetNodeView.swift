@@ -44,19 +44,24 @@ struct DatasetNodeView: View {
 
     private var isInferenceMode: Bool { viewModel.canvasMode == .inference }
 
-    private var inferenceHeight: CGFloat {
-        let inputCount = CGFloat(viewModel.inferenceInputInfos.count)
-        return 52 + inputCount * 62 + 8  // header + inputs + padding
+    private var isDatasetSource: Bool {
+        isInferenceMode && viewModel.inferenceInputSource == .dataset
     }
 
     var body: some View {
         ZStack {
             VStack(alignment: .leading, spacing: 0) {
-                if isInferenceMode {
+                if isInferenceMode && isDatasetSource {
+                    inferenceHeader
+                    Divider().padding(.horizontal, 8)
+                    columnHeaders
+                    inferenceDatasetScrollableRows
+                        .padding(.bottom, 4)
+                } else if isInferenceMode {
                     inferenceHeader
                     Divider().padding(.horizontal, 8)
                     inferenceInputControls
-                    Spacer(minLength: 4)
+                        .padding(.bottom, 4)
                 } else {
                     header
                     Divider().padding(.horizontal, 8)
@@ -66,7 +71,8 @@ struct DatasetNodeView: View {
                     Spacer(minLength: 4)
                 }
             }
-            .frame(width: DatasetNodeLayout.width, height: isInferenceMode ? inferenceHeight : nodeHeight)
+            .frame(width: DatasetNodeLayout.width, height: isInferenceMode ? nil : nodeHeight)
+            .fixedSize(horizontal: false, vertical: isInferenceMode)
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(.regularMaterial)
@@ -81,7 +87,7 @@ struct DatasetNodeView: View {
                     .animation(.easeInOut(duration: 0.3), value: isGlowing)
             )
 
-            if isInferenceMode {
+            if isInferenceMode && !isDatasetSource {
                 inferencePortColumn
             } else {
                 portColumn
@@ -246,14 +252,32 @@ struct DatasetNodeView: View {
     // MARK: - Inference Mode Views
 
     private var inferenceHeader: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 10))
-                .foregroundStyle(.green)
-            Text("Input")
-                .font(.caption.bold())
-                .foregroundStyle(.primary)
-            Spacer()
+        VStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: isDatasetSource ? "tablecells.fill" : "slider.horizontal.3")
+                    .font(.system(size: 10))
+                    .foregroundStyle(isDatasetSource ? .blue : .green)
+                Text("Input")
+                    .font(.caption.bold())
+                    .foregroundStyle(.primary)
+                Spacer()
+            }
+
+            Picker("Source", selection: $viewModel.inferenceInputSource) {
+                ForEach(InferenceInputSource.allCases, id: \.self) { source in
+                    Text(source.rawValue).tag(source)
+                }
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.mini)
+            .onChange(of: viewModel.inferenceInputSource) { _, newValue in
+                if newValue == .dataset {
+                    viewModel.inferenceDatasetRowIndex = 0
+                    viewModel.activeSampleIndex = 0
+                } else {
+                    viewModel.activeSampleIndex = nil
+                }
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -290,6 +314,23 @@ struct DatasetNodeView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private var inferenceDatasetScrollableRows: some View {
+        let maxH = CGFloat(DatasetNodeLayout.maxVisibleRows) * DatasetNodeLayout.rowHeight
+        return ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(config.rows.indices, id: \.self) { ri in
+                    dataRow(values: config.rows[ri], rowIndex: ri)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            guard !viewModel.isPredicting else { return }
+                            viewModel.selectDatasetRow(ri)
+                        }
+                }
+            }
+        }
+        .frame(maxHeight: maxH)
     }
 
     @ViewBuilder
