@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject var canvasViewModel = CanvasViewModel()
+    @StateObject var canvasViewModel = CanvasViewModel.init()
     @State private var showPlayground = true
 
     var body: some View {
