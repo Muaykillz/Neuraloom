@@ -57,6 +57,9 @@ extension CanvasViewModel {
             }
         }
 
+        inferenceInputSource = .manual
+        inferenceDatasetRowIndex = 0
+
         playgroundMode = .inspect
         selectedNodeId = nil
         selectedConnectionId = nil
@@ -70,9 +73,14 @@ extension CanvasViewModel {
     func exitInferenceMode() {
         guard canvasMode == .inference else { return }
 
-        let autoIds = Set(autoOutputDisplayIds)
+        let autoIds = Set(autoOutputDisplayIds).union(inferenceTemporaryNodeIds)
         nodes.removeAll { autoIds.contains($0.id) }
-        connections.removeAll { autoIds.contains($0.sourceNodeId) || autoIds.contains($0.targetNodeId) }
+        connections.removeAll {
+            autoIds.contains($0.sourceNodeId) || autoIds.contains($0.targetNodeId)
+            || inferenceTemporaryConnectionIds.contains($0.id)
+        }
+        inferenceTemporaryNodeIds.removeAll()
+        inferenceTemporaryConnectionIds.removeAll()
 
         playgroundMode = savedPlaygroundMode
         selectedNodeId = savedSelectedNodeId
@@ -83,6 +91,7 @@ extension CanvasViewModel {
         inferenceOutputNodeIds = []
         autoOutputDisplayIds = []
         compiledInferenceNetwork = nil
+        activeSampleIndex = nil
 
         withAnimation(.spring()) {
             canvasMode = .train
@@ -92,10 +101,34 @@ extension CanvasViewModel {
     // MARK: - Run Inference
 
     func runInference() {
-        Task { await runAnimatedInference() }
+        switch inferenceInputSource {
+        case .manual:
+            Task { await runAnimatedInference() }
+        case .dataset:
+            Task { await runDatasetRowInference() }
+        }
     }
 
-    private func runAnimatedInference() async {
+    func selectDatasetRow(_ index: Int) {
+        inferenceDatasetRowIndex = index
+        activeSampleIndex = index
+    }
+
+    private func runDatasetRowInference() async {
+        guard let dsNode = nodes.first(where: { $0.type == .dataset }),
+              let config = dsNode.datasetConfig else { return }
+        let rows = config.cachedRows
+        guard inferenceDatasetRowIndex < rows.count else { return }
+
+        let row = rows[inferenceDatasetRowIndex]
+        let inputCount = config.preset.inputColumnCount
+        let inputValues = Array(row.prefix(inputCount))
+
+        activeSampleIndex = inferenceDatasetRowIndex
+        await runAnimatedInference(inputOverride: inputValues)
+    }
+
+    private func runAnimatedInference(inputOverride: [Double]? = nil) async {
         guard !isPredicting else { return }
         guard var net = compiledInferenceNetwork else { return }
 
@@ -109,16 +142,26 @@ extension CanvasViewModel {
         let nodeGlowDuration: TimeInterval = 0.15
 
         let inputNeuronIds = nodes.filter { $0.isInput }.map(\.id)
-        var inputValues: [Double] = []
-        for neuronId in inputNeuronIds {
-            var value = 0.0
-            for conn in connections {
-                if conn.targetNodeId == neuronId, let v = inferenceInputs[conn.sourceNodeId] {
-                    value = v
-                    break
+        var inputValues: [Double]
+        if let override = inputOverride {
+            inputValues = override
+        } else {
+            inputValues = []
+            for neuronId in inputNeuronIds {
+                var value = 0.0
+                for conn in connections {
+                    guard conn.targetNodeId == neuronId else { continue }
+                    if let v = inferenceInputs[conn.sourceNodeId] {
+                        value = v
+                        break
+                    }
+                    if let srcNode = nodes.first(where: { $0.id == conn.sourceNodeId && $0.type == .number }) {
+                        value = srcNode.numberValue
+                        break
+                    }
                 }
+                inputValues.append(value)
             }
-            inputValues.append(value)
         }
 
         for (i, idx) in net.model.inputNodeIndices.enumerated() {
@@ -136,6 +179,20 @@ extension CanvasViewModel {
 
         let (layers, _) = computeNodeLayers()
         let idToModelIdx = net.nodeVMIdToNodeIdx
+
+        // Update Result nodes connected directly to dataset ports
+        if let dsNode = nodes.first(where: { $0.type == .dataset }),
+           let dsConfig = dsNode.datasetConfig,
+           inferenceInputSource == .dataset {
+            let row = dsConfig.cachedRows[inferenceDatasetRowIndex]
+            for conn in connections {
+                if let ci = dsConfig.columnPortIds.firstIndex(of: conn.sourceNodeId),
+                   let displayIdx = nodes.firstIndex(where: { $0.id == conn.targetNodeId && $0.type == .outputDisplay }) {
+                    let value = ci < row.count ? row[ci] : 0.0
+                    nodes[displayIdx].outputDisplayValue = value
+                }
+            }
+        }
 
         // Animate from Dataset to Input Layer
         let datasetNodeIds = Set(nodes.filter { $0.type == .dataset }.map(\.id))
@@ -230,6 +287,64 @@ extension CanvasViewModel {
             try? await Task.sleep(for: .seconds(nodeGlowDuration))
         }
 
+        computeInferenceLoss(net: net)
+        compiledInferenceNetwork = net
+    }
+
+    /// Computes loss for any temporary loss node added during inference.
+    /// Resolves predicted and true values from connected ports; sets `currentLoss` to nil if unresolvable.
+    private func computeInferenceLoss(net: TrainingService.CompiledNetwork) {
+        guard let lossNode = nodes.first(where: { $0.type == .loss && inferenceTemporaryNodeIds.contains($0.id) }),
+              let config = lossNode.lossConfig else {
+            if canvasMode == .inference { currentLoss = nil }
+            return
+        }
+
+        let predValue = resolvePortValue(portId: config.predPortId)
+        let trueValue = resolvePortValue(portId: config.truePortId)
+
+        if let pred = predValue, let truth = trueValue {
+            currentLoss = selectedLossFunction.compute(predicted: [pred], target: [truth])
+        } else {
+            currentLoss = nil
+        }
+    }
+
+    /// Traces a loss-port connection back to its source and returns the resolved value.
+    private func resolvePortValue(portId: UUID) -> Double? {
+        guard let conn = connections.first(where: { $0.targetNodeId == portId }) else { return nil }
+        let sourceId = conn.sourceNodeId
+
+        if let val = nodeOutputs[sourceId] { return val }
+
+        if let dsNode = nodes.first(where: { $0.type == .dataset }),
+           let dsConfig = dsNode.datasetConfig,
+           let colIdx = dsConfig.columnPortIds.firstIndex(of: sourceId) {
+            if inferenceInputSource == .dataset {
+                let rows = dsConfig.cachedRows
+                if inferenceDatasetRowIndex < rows.count, colIdx < rows[inferenceDatasetRowIndex].count {
+                    return rows[inferenceDatasetRowIndex][colIdx]
+                }
+            } else if let manualVal = inferenceInputs[sourceId] {
+                return manualVal
+            }
+        }
+
+        if let numNode = nodes.first(where: { $0.id == sourceId && $0.type == .number }) {
+            return numNode.numberValue
+        }
+
+        return nil
+    }
+
+    // MARK: - Live Weight Sync
+
+    /// Updates the compiled inference network's weight in-place so the next Predict uses the new value.
+    func syncWeightToInferenceNetwork(connectionId: UUID, newValue: Double) {
+        guard canvasMode == .inference,
+              var net = compiledInferenceNetwork,
+              let wIdx = net.connToWeightIdx[connectionId] else { return }
+        net.model.weightValues[wIdx] = newValue
         compiledInferenceNetwork = net
     }
 
@@ -250,7 +365,7 @@ extension CanvasViewModel {
             for conn in neuronConns {
                 if let sourceDepth = nodeDepths[conn.sourceNodeId] {
                     let targetDepth = nodeDepths[conn.targetNodeId]
-                    if targetDepth == nil || targetDepth! <= sourceDepth {
+                    if targetDepth.map({ $0 <= sourceDepth }) ?? true {
                         nodeDepths[conn.targetNodeId] = sourceDepth + 1
                         changed = true
                     }
@@ -271,18 +386,33 @@ extension CanvasViewModel {
     // MARK: - Visible Nodes/Connections (filtered by mode)
 
     private var inferenceHiddenNodeTypes: Set<NodeViewModel.NodeType> {
-        [.loss, .visualization]
+        [.visualization]
+    }
+
+    /// Node IDs hidden in inference: visualization nodes + train-mode (non-temporary) loss nodes.
+    private var inferenceHiddenNodeIds: Set<UUID> {
+        var ids = Set(nodes.filter { inferenceHiddenNodeTypes.contains($0.type) }.map(\.id))
+        // Hide train-mode loss nodes but keep temporary ones added during inference
+        for node in nodes where node.type == .loss && !inferenceTemporaryNodeIds.contains(node.id) {
+            ids.insert(node.id)
+        }
+        return ids
     }
 
     var visibleNodes: [NodeViewModel] {
         if canvasMode == .train { return nodes }
-        return nodes.filter { !inferenceHiddenNodeTypes.contains($0.type) }
+        let hidden = inferenceHiddenNodeIds
+        return nodes.filter { !hidden.contains($0.id) }
     }
 
     var visibleConnections: [DrawableConnection] {
         if canvasMode == .train { return drawableConnections }
-        let hiddenNodeIds = Set(nodes.filter { inferenceHiddenNodeTypes.contains($0.type) }.map(\.id))
-        let hiddenPortIds: Set<UUID> = Set(nodes.compactMap { $0.lossConfig }.flatMap { $0.inputPortIds })
+        let hiddenNodeIds = inferenceHiddenNodeIds
+        let hiddenPortIds: Set<UUID> = Set(
+            nodes.filter { $0.type == .loss && !inferenceTemporaryNodeIds.contains($0.id) }
+                .compactMap { $0.lossConfig }
+                .flatMap { $0.inputPortIds }
+        )
         return drawableConnections.filter { conn in
             let rawConn = connections.first(where: { $0.id == conn.id })
             guard let raw = rawConn else { return true }

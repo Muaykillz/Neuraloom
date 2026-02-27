@@ -14,6 +14,9 @@ extension CanvasViewModel {
         if type == .loss {
             newNode.lossConfig = LossNodeConfig()
         }
+        if canvasMode == .inference {
+            inferenceTemporaryNodeIds.insert(newNode.id)
+        }
         withAnimation(.spring()) {
             nodes.append(newNode)
         }
@@ -22,10 +25,10 @@ extension CanvasViewModel {
     func deleteNode(id: UUID) {
         let portIds: Set<UUID> = {
             guard let node = nodes.first(where: { $0.id == id }) else { return [] }
-            var ids = Set<UUID>()
-            if let dsConfig = node.datasetConfig { ids.formUnion(dsConfig.columnPortIds) }
-            if let lConfig = node.lossConfig { ids.formUnion(lConfig.inputPortIds) }
-            return ids
+            var result = Set<UUID>()
+            if let config = node.datasetConfig { result.formUnion(config.columnPortIds) }
+            if let config = node.lossConfig { result.formUnion(config.inputPortIds) }
+            return result
         }()
         withAnimation(.spring()) {
             nodes.removeAll { $0.id == id }
@@ -88,7 +91,11 @@ extension CanvasViewModel {
             } else {
                 initVal = Double.random(in: -1.0...1.0)
             }
-            connections.append(ConnectionViewModel(sourceNodeId: sourceId, targetNodeId: targetId, value: initVal))
+            let newConn = ConnectionViewModel(sourceNodeId: sourceId, targetNodeId: targetId, value: initVal)
+            if canvasMode == .inference {
+                inferenceTemporaryConnectionIds.insert(newConn.id)
+            }
+            connections.append(newConn)
         }
     }
 
@@ -101,7 +108,11 @@ extension CanvasViewModel {
     func updateConnectionValue(id: UUID, value: Double) {
         if let idx = connections.firstIndex(where: { $0.id == id }) {
             connections[idx].value = value
-            trainingService.invalidateStepping()
+            if canvasMode == .inference {
+                syncWeightToInferenceNetwork(connectionId: id, newValue: value)
+            } else {
+                trainingService.invalidateStepping()
+            }
         }
     }
 
@@ -118,14 +129,19 @@ extension CanvasViewModel {
     }
 
     func clearCanvas() {
-        withAnimation(.spring()) {
-            nodes.removeAll()
-            connections.removeAll()
-            selectedNodeId = nil
-            selectedConnectionId = nil
-            connectionTapGlobalLocation = nil
+        withAnimation(.easeOut(duration: 0.2)) {
+            canvasOpacity = 0.0
         }
-        resetTraining()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self else { return }
+            self.nodes.removeAll()
+            self.connections.removeAll()
+            self.selectedNodeId = nil
+            self.selectedConnectionId = nil
+            self.connectionTapGlobalLocation = nil
+            self.resetTraining()
+            self.canvasOpacity = 1.0
+        }
     }
 
     // MARK: - Helpers
