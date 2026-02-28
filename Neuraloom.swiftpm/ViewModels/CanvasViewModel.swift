@@ -31,7 +31,20 @@ class CanvasViewModel: ObservableObject {
     @Published var activeSampleIndex: Int? = nil
     @Published var stepCount = 0
     @Published var playgroundMode: PlaygroundMode = .dev {
-        didSet { clearGlow() }
+        didSet {
+            clearGlow()
+            if playgroundMode == .inspect {
+                fulfillTourCondition(.inspectModeOpened)
+            }
+        }
+    }
+
+    // MARK: - Tour Condition Tracking
+
+    @Published var fulfilledTourConditions: Set<String> = []
+
+    func fulfillTourCondition(_ condition: TourCompletionCondition) {
+        fulfilledTourConditions.insert(condition.key)
     }
     var inspectMode: Bool { playgroundMode == .inspect }
     @Published var nodeOutputs: [UUID: Double] = [:]
@@ -54,6 +67,7 @@ class CanvasViewModel: ObservableObject {
     @Published var canvasOpacity: Double = 1.0
     @Published var inferenceInputSource: InferenceInputSource = .manual
     @Published var predictAllMode: Bool = true
+    @Published var autoPredict: Bool = false
     @Published var inferenceDatasetRowIndex: Int = 0
     var savedPlaygroundMode: PlaygroundMode = .dev
     var savedSelectedNodeId: UUID?
@@ -96,6 +110,7 @@ class CanvasViewModel: ObservableObject {
         sampleLossAccumulator = []
         nodeOutputs = [:]
         nodeGradients = [:]
+        fulfilledTourConditions = []
         canvasMode = .train
         inferenceInputs = [:]
         inferenceInputInfos = []
@@ -107,6 +122,7 @@ class CanvasViewModel: ObservableObject {
         canvasOpacity = 1.0
         inferenceInputSource = .manual
         inferenceDatasetRowIndex = 0
+        autoPredict = false
         compiledInferenceNetwork = nil
         playgroundMode = .dev
         lastMagnification = 1.0
@@ -151,6 +167,43 @@ class CanvasViewModel: ObservableObject {
 
         addConnection(from: o1Id, to: lossConfig.predPortId)
         addConnection(from: dsConfig.columnPortIds[2], to: lossConfig.truePortId)
+
+        addConnection(from: lossId, to: vizId)
+    }
+
+    // MARK: - Linear Regression Demo
+
+    func setupLinearRegressionDemo() {
+        let inId = UUID(); let outId = UUID()
+        let dsId = UUID(); let lossId = UUID(); let vizId = UUID()
+        let biasId = UUID()
+        let dsConfig = DatasetNodeConfig(preset: .linear)
+        let lossConfig = LossNodeConfig()
+
+        nodes = [
+            NodeViewModel(id: inId, position: CGPoint(x: 100, y: 300), type: .neuron, activation: .linear, role: .input),
+            NodeViewModel(id: outId, position: CGPoint(x: 400, y: 300), type: .neuron, activation: .linear, role: .output),
+            NodeViewModel(id: biasId, position: CGPoint(x: 100, y: 450), type: .neuron, activation: .linear, role: .bias),
+            {
+                var n = NodeViewModel(id: dsId, position: CGPoint(x: -150, y: 300), type: .dataset)
+                n.datasetConfig = dsConfig
+                return n
+            }(),
+            {
+                var n = NodeViewModel(id: lossId, position: CGPoint(x: 600, y: 300), type: .loss)
+                n.lossConfig = lossConfig
+                return n
+            }(),
+            NodeViewModel(id: vizId, position: CGPoint(x: 850, y: 300), type: .visualization)
+        ]
+
+        addConnection(from: inId, to: outId)
+        addConnection(from: biasId, to: outId)
+
+        addConnection(from: dsConfig.columnPortIds[0], to: inId)
+
+        addConnection(from: outId, to: lossConfig.predPortId)
+        addConnection(from: dsConfig.columnPortIds[1], to: lossConfig.truePortId)
 
         addConnection(from: lossId, to: vizId)
     }

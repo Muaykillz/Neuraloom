@@ -14,12 +14,16 @@ extension CanvasViewModel {
         if type == .loss {
             newNode.lossConfig = LossNodeConfig()
         }
+        if type == .scatterPlot {
+            newNode.scatterPlotConfig = ScatterPlotConfig()
+        }
         if canvasMode == .inference {
             inferenceTemporaryNodeIds.insert(newNode.id)
         }
         withAnimation(.spring()) {
             nodes.append(newNode)
         }
+        fulfillTourCondition(.nodeAdded)
     }
 
     func deleteNode(id: UUID) {
@@ -28,6 +32,7 @@ extension CanvasViewModel {
             var result = Set<UUID>()
             if let config = node.datasetConfig { result.formUnion(config.columnPortIds) }
             if let config = node.lossConfig { result.formUnion(config.inputPortIds) }
+            if let config = node.scatterPlotConfig { result.formUnion(config.inputPortIds) }
             return result
         }()
         withAnimation(.spring()) {
@@ -72,7 +77,8 @@ extension CanvasViewModel {
         }
         let isDatasetPort = columnPortPosition(portId: sourceId) != nil
         let isLossPort = lossPortPosition(portId: targetId) != nil
-        if !isDatasetPort && !isLossPort {
+        let isScatterPort = scatterPlotPortPosition(portId: targetId) != nil
+        if !isDatasetPort && !isLossPort && !isScatterPort {
             if let target = nodes.first(where: { $0.id == targetId }), target.type == .dataset {
                 triggerToast("Dataset nodes cannot receive connections.")
                 return
@@ -84,7 +90,7 @@ extension CanvasViewModel {
         }
         if !connections.contains(where: { $0.sourceNodeId == sourceId && $0.targetNodeId == targetId }) {
             let initVal: Double
-            if isDatasetPort || isLossPort {
+            if isDatasetPort || isLossPort || isScatterPort {
                 initVal = 0.0
             } else if nodes.first(where: { $0.id == sourceId })?.isBias == true {
                 initVal = 0.0
@@ -96,6 +102,7 @@ extension CanvasViewModel {
                 inferenceTemporaryConnectionIds.insert(newConn.id)
             }
             connections.append(newConn)
+            fulfillTourCondition(.connectionMade)
         }
     }
 
@@ -108,6 +115,7 @@ extension CanvasViewModel {
     func updateConnectionValue(id: UUID, value: Double) {
         if let idx = connections.firstIndex(where: { $0.id == id }) {
             connections[idx].value = value
+            fulfillTourCondition(.weightChanged)
             if canvasMode == .inference {
                 syncWeightToInferenceNetwork(connectionId: id, newValue: value)
             } else {

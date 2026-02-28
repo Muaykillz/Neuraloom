@@ -1,18 +1,95 @@
 import SwiftUI
 
+// MARK: - Tour Rich Text
+
+struct TourSpan {
+    let text: String
+    var bold: Bool = false
+    var italic: Bool = false
+    var accent: Bool = false
+    var mono: Bool = false
+}
+
+// MARK: - Tour Completion Conditions
+
+enum TourCompletionCondition: Equatable {
+    case inspectModeOpened
+    case weightChanged
+    case weightTapped
+    case trainingStepRun
+    case trainStarted
+    case nodeAdded
+    case connectionMade
+    case custom(id: String)
+
+    var key: String {
+        switch self {
+        case .inspectModeOpened: return "inspectModeOpened"
+        case .weightChanged: return "weightChanged"
+        case .weightTapped: return "weightTapped"
+        case .trainingStepRun: return "trainingStepRun"
+        case .trainStarted: return "trainStarted"
+        case .nodeAdded: return "nodeAdded"
+        case .connectionMade: return "connectionMade"
+        case .custom(let id): return "custom.\(id)"
+        }
+    }
+}
+
+// MARK: - Tour Highlight Target
+
+enum TourHighlightTarget {
+    case node(id: UUID)
+    case connection(id: UUID)
+    case glowNodes(ids: Set<UUID>)
+}
+
+// MARK: - Tour Step
+
 struct TourStep {
     let title: String
-    let body: String
+    let richBody: [[TourSpan]]
+    var completionCondition: TourCompletionCondition?
+    var highlightTarget: TourHighlightTarget?
+
+    /// Convenience init that keeps existing plain-text callers compiling.
+    init(title: String, body: String) {
+        self.title = title
+        self.richBody = [[TourSpan(text: body)]]
+        self.completionCondition = nil
+        self.highlightTarget = nil
+    }
+
+    init(
+        title: String,
+        body: [[TourSpan]],
+        completionCondition: TourCompletionCondition? = nil,
+        highlightTarget: TourHighlightTarget? = nil
+    ) {
+        self.title = title
+        self.richBody = body
+        self.completionCondition = completionCondition
+        self.highlightTarget = highlightTarget
+    }
 }
+
+// MARK: - Tour Message Box View
 
 struct TourMessageBoxView: View {
     let steps: [TourStep]
     @Binding var currentStep: Int
     let onDismiss: () -> Void
+    var canvasViewModel: CanvasViewModel?
 
     private var step: TourStep { steps[currentStep] }
     private var isFirst: Bool { currentStep == 0 }
     private var isLast: Bool { currentStep == steps.count - 1 }
+
+    private var isNextLocked: Bool {
+        guard let condition = step.completionCondition,
+              let vm = canvasViewModel else { return false }
+        return !vm.fulfilledTourConditions.contains(condition.key)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -38,11 +115,13 @@ struct TourMessageBoxView: View {
                 .buttonStyle(.plain)
             }
 
-            // Body
-            Text(step.body)
-                .font(.system(size: 15, design: .rounded))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            // Body — rich text
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(step.richBody.enumerated()), id: \.offset) { _, spans in
+                    buildTourLine(spans)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
 
             // Footer navigation
             HStack {
@@ -75,15 +154,22 @@ struct TourMessageBoxView: View {
                         }
                     }
                 } label: {
-                    Text(isLast ? "Done" : "Next")
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    if !isLast {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
+                    HStack(spacing: 4) {
+                        if isNextLocked {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        Text(isLast ? "Done" : "Next")
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        if !isLast && !isNextLocked {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
                     }
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.orange)
+                .foregroundStyle(isNextLocked ? .gray : .orange)
+                .disabled(isNextLocked)
             }
             .padding(.top, 4)
         }
@@ -97,5 +183,34 @@ struct TourMessageBoxView: View {
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.1), radius: 12)
+    }
+
+    // MARK: - Rich text builder
+
+    private func buildTourLine(_ spans: [TourSpan]) -> some View {
+        spans.reduce(Text("")) { result, span in
+            var font: Font
+            if span.mono {
+                font = .system(size: 15, design: .monospaced)
+            } else {
+                font = .system(size: 15, design: .rounded)
+            }
+
+            if span.bold && span.italic {
+                font = font.bold().italic()
+            } else if span.bold {
+                font = font.bold()
+            } else if span.italic {
+                font = font.italic()
+            }
+
+            let color: Color = span.accent ? .orange : .secondary
+
+            let styledSpan = Text(span.text)
+                .font(font)
+                .foregroundColor(color)
+
+            return Text("\(result)\(styledSpan)")
+        }
     }
 }

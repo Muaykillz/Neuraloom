@@ -8,6 +8,7 @@ extension CanvasViewModel {
         guard !isTraining else { return }
 
         isTraining = true
+        fulfillTourCondition(.trainStarted)
 
         if currentEpoch == 0 && stepCount == 0 {
             lossHistory = []
@@ -118,6 +119,7 @@ extension CanvasViewModel {
             self.applyNodeSync(update.nodeSync)
             self.stepPhase = update.phase
             self.activeSampleIndex = update.sampleIndex
+            self.fulfillTourCondition(.trainingStepRun)
         }
     }
 
