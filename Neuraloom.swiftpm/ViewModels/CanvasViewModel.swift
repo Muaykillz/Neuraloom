@@ -53,6 +53,7 @@ class CanvasViewModel: ObservableObject {
     @Published var isPredicting = false
     @Published var canvasOpacity: Double = 1.0
     @Published var inferenceInputSource: InferenceInputSource = .manual
+    @Published var predictAllMode: Bool = true
     @Published var inferenceDatasetRowIndex: Int = 0
     var savedPlaygroundMode: PlaygroundMode = .dev
     var savedSelectedNodeId: UUID?
@@ -67,8 +68,51 @@ class CanvasViewModel: ObservableObject {
     var previousTranslation: CGSize = .zero
     var sampleTrainingTimer: Timer?
 
-    init() {
-        setupMVPScenario()
+    init() {}
+
+    // MARK: - Reset
+
+    func resetCanvas() {
+        nodes = []
+        connections = []
+        scale = 1.0
+        offset = .zero
+        activeWiringSource = nil
+        wiringTargetPosition = nil
+        hoveredNodeId = nil
+        selectedNodeId = nil
+        selectedConnectionId = nil
+        connectionTapGlobalLocation = nil
+        toastMessage = nil
+        isTraining = false
+        currentEpoch = 0
+        currentLoss = nil
+        lossHistory = []
+        stepCount = 0
+        activeSampleIndex = nil
+        stepPhase = nil
+        glowingNodeIds = []
+        glowingConnectionIds = []
+        sampleLossAccumulator = []
+        nodeOutputs = [:]
+        nodeGradients = [:]
+        canvasMode = .train
+        inferenceInputs = [:]
+        inferenceInputInfos = []
+        inferenceOutputNodeIds = []
+        autoOutputDisplayIds = []
+        inferenceTemporaryNodeIds = []
+        inferenceTemporaryConnectionIds = []
+        isPredicting = false
+        canvasOpacity = 1.0
+        inferenceInputSource = .manual
+        inferenceDatasetRowIndex = 0
+        compiledInferenceNetwork = nil
+        playgroundMode = .dev
+        lastMagnification = 1.0
+        previousTranslation = .zero
+        sampleTrainingTimer?.invalidate()
+        sampleTrainingTimer = nil
     }
 
     // MARK: - MVP Setup
