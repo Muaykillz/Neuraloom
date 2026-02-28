@@ -83,6 +83,10 @@ extension CanvasViewModel {
                 let canvasPt = convertToCanvasSpace(location)
                 let targetId = closestLossPort(config: config, nodePosition: targetNode.position, to: canvasPt)
                 addConnection(from: sourceId, to: targetId)
+            } else if targetNode.type == .scatterPlot, let config = targetNode.scatterPlotConfig {
+                let canvasPt = convertToCanvasSpace(location)
+                let targetId = closestScatterPort(config: config, nodePosition: targetNode.position, to: canvasPt)
+                addConnection(from: sourceId, to: targetId)
             } else {
                 addConnection(from: sourceId, to: targetNode.id)
             }
@@ -128,6 +132,8 @@ extension CanvasViewModel {
             return CGRect(x: p.x - 60, y: p.y - 40, width: 120, height: 80)
         case .annotation:
             return CGRect(x: p.x - 70, y: p.y - 18, width: 140, height: 36)
+        case .scatterPlot:
+            return CGRect(x: p.x - 135, y: p.y - 105, width: 260, height: 210)
         }
     }
 
@@ -158,6 +164,19 @@ extension CanvasViewModel {
     }
 
     // MARK: - Loss Port Helpers
+
+    func closestScatterPort(config: ScatterPlotConfig, nodePosition: CGPoint, to point: CGPoint) -> UUID {
+        let totalH = CGFloat(config.inputPortIds.count - 1) * DatasetNodeLayout.portSpacing
+        let startY = nodePosition.y - totalH / 2
+        var bestId = config.inputPortIds[0]
+        var bestDist = CGFloat.infinity
+        for (pi, portId) in config.inputPortIds.enumerated() {
+            let portY = startY + CGFloat(pi) * DatasetNodeLayout.portSpacing
+            let dist = abs(point.y - portY)
+            if dist < bestDist { bestDist = dist; bestId = portId }
+        }
+        return bestId
+    }
 
     func closestLossPort(config: LossNodeConfig, nodePosition: CGPoint, to point: CGPoint) -> UUID {
         let totalH = CGFloat(config.inputPortIds.count - 1) * DatasetNodeLayout.portSpacing

@@ -45,6 +45,7 @@ struct NodeViewModel: Identifiable {
         case outputDisplay = "Result"
         case number = "Number"
         case annotation = "Note"
+        case scatterPlot = "Scatter"
 
         var icon: String {
             switch self {
@@ -55,6 +56,7 @@ struct NodeViewModel: Identifiable {
             case .outputDisplay: return "eye.circle.fill"
             case .number:        return "number"
             case .annotation:    return "note.text"
+            case .scatterPlot:   return "chart.dots.scatter"
             }
         }
     }
@@ -66,6 +68,9 @@ struct NodeViewModel: Identifiable {
     var role: NodeRole = .hidden
     var datasetConfig: DatasetNodeConfig?
     var lossConfig: LossNodeConfig?
+    var scatterPlotConfig: ScatterPlotConfig?
+    var scatterSeriesA: [(x: Double, y: Double)] = []
+    var scatterSeriesB: [(x: Double, y: Double)] = []
     var outputDisplayValue: Double?
     var annotationText: String = "Note"
     var numberValue: Double = 0.0

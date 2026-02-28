@@ -10,6 +10,8 @@ extension CanvasViewModel {
             let toPoint: CGPoint
             if let portPos = lossPortPosition(portId: conn.targetNodeId) {
                 toPoint = portPos
+            } else if let portPos = scatterPlotPortPosition(portId: conn.targetNodeId) {
+                toPoint = portPos
             } else if let toNode = nodes.first(where: { $0.id == conn.targetNodeId }) {
                 toPoint = inputEdge(of: toNode)
             } else {
@@ -23,6 +25,7 @@ extension CanvasViewModel {
 
             guard let fromNode = nodes.first(where: { $0.id == conn.sourceNodeId }) else { return nil }
             let targetIsLossPort = lossPortPosition(portId: conn.targetNodeId) != nil
+                || scatterPlotPortPosition(portId: conn.targetNodeId) != nil
             let targetNode = nodes.first(where: { $0.id == conn.targetNodeId })
             let isUtility = fromNode.type != .neuron || targetNode?.type != .neuron || targetIsLossPort
             let fromPt = outputEdge(of: fromNode)
@@ -53,6 +56,13 @@ extension CanvasViewModel {
                     return (fromPoint, portPos)
                 }
             }
+            if hoveredNode.type == .scatterPlot, let config = hoveredNode.scatterPlotConfig {
+                let canvasPt = convertToCanvasSpace(targetPos)
+                let portId = closestScatterPort(config: config, nodePosition: hoveredNode.position, to: canvasPt)
+                if let portPos = scatterPlotPortPosition(portId: portId) {
+                    return (fromPoint, portPos)
+                }
+            }
             return (fromPoint, inputEdge(of: hoveredNode))
         }
 
@@ -69,6 +79,7 @@ extension CanvasViewModel {
         case .visualization: return CGPoint(x: p.x + 109, y: p.y)
         case .outputDisplay: return CGPoint(x: p.x + 70, y: p.y)
         case .number:        return CGPoint(x: p.x + 50, y: p.y)
+        case .scatterPlot:   return CGPoint(x: p.x + 120, y: p.y)
         default:             return p
         }
     }
@@ -81,6 +92,7 @@ extension CanvasViewModel {
         case .visualization: return CGPoint(x: p.x - 109, y: p.y)
         case .outputDisplay: return CGPoint(x: p.x - 70, y: p.y)
         case .number:        return CGPoint(x: p.x - 50, y: p.y)
+        case .scatterPlot:   return CGPoint(x: p.x - 123, y: p.y)
         default:             return p
         }
     }
@@ -95,6 +107,21 @@ extension CanvasViewModel {
                 let startY = node.position.y - totalH / 2
                 return CGPoint(
                     x: node.position.x - 63,
+                    y: startY + CGFloat(pi) * DatasetNodeLayout.portSpacing
+                )
+            }
+        }
+        return nil
+    }
+
+    func scatterPlotPortPosition(portId: UUID) -> CGPoint? {
+        for node in nodes where node.type == .scatterPlot {
+            guard let config = node.scatterPlotConfig else { continue }
+            if let pi = config.inputPortIds.firstIndex(of: portId) {
+                let totalH = CGFloat(config.inputPortIds.count - 1) * DatasetNodeLayout.portSpacing
+                let startY = node.position.y - totalH / 2
+                return CGPoint(
+                    x: node.position.x - 123,
                     y: startY + CGFloat(pi) * DatasetNodeLayout.portSpacing
                 )
             }

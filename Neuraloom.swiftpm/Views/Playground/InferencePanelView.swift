@@ -22,6 +22,31 @@ struct InferencePanelView: View {
 
     var body: some View {
         HStack(spacing: 16) {
+            // Auto Predict toggle
+            Button {
+                withAnimation(.easeOut(duration: 0.15)) {
+                    viewModel.autoPredict.toggle()
+                }
+                if viewModel.autoPredict {
+                    viewModel.runAutoPredict()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: viewModel.autoPredict ? "bolt.fill" : "bolt")
+                        .font(.system(size: 10))
+                    Text("Auto")
+                        .font(.subheadline.bold())
+                }
+                .fixedSize()
+                .foregroundStyle(viewModel.autoPredict ? .white : .secondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+            .background(
+                Capsule().fill(viewModel.autoPredict ? Color.orange : Color.secondary.opacity(0.15))
+            )
+
             // Split button: [action | chevron]
             HStack(spacing: 0) {
                 Button {

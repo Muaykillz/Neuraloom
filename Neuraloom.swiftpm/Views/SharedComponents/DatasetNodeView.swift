@@ -277,6 +277,7 @@ struct DatasetNodeView: View {
                 } else {
                     viewModel.activeSampleIndex = nil
                 }
+                viewModel.runAutoPredict()
             }
         }
         .padding(.horizontal, 10)
@@ -314,6 +315,9 @@ struct DatasetNodeView: View {
             }
         }
         .padding(.vertical, 4)
+        .onChange(of: viewModel.inferenceInputs) {
+            viewModel.runAutoPredict()
+        }
     }
 
     private var inferenceDatasetScrollableRows: some View {
@@ -331,6 +335,9 @@ struct DatasetNodeView: View {
             }
         }
         .frame(maxHeight: maxH)
+        .onChange(of: viewModel.inferenceDatasetRowIndex) {
+            viewModel.runAutoPredict()
+        }
     }
 
     @ViewBuilder

@@ -71,7 +71,10 @@ struct WeightPopoverView: View {
                     .onChange(of: editingValue) { _, v in
                         if let d = Double(v) {
                             viewModel.updateConnectionValue(id: connection.id, value: d)
-                            if isInference { sliderValue = d }
+                            if isInference {
+                                sliderValue = d
+                                viewModel.runAutoPredict()
+                            }
                         }
                     }
                     .onChange(of: conn.value) { _, newVal in
@@ -96,6 +99,7 @@ struct WeightPopoverView: View {
                         .onChange(of: sliderValue) { _, newVal in
                             editingValue = String(format: "%.4f", newVal)
                             viewModel.updateConnectionValue(id: connection.id, value: newVal)
+                            viewModel.runAutoPredict()
                         }
                 }
             }
@@ -201,6 +205,7 @@ struct WeightPopoverView: View {
         case .outputDisplay: return .green
         case .number:        return .teal
         case .annotation:    return .gray
+        case .scatterPlot:   return .teal
         }
     }
 }

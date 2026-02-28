@@ -2,30 +2,45 @@ import UIKit
 
 // MARK: - Playground Project
 
+enum DemoType: String, Codable {
+    case xor
+    case linearRegression
+}
+
 struct PlaygroundProject: Identifiable, Codable {
     let id: UUID
     var name: String
     let createdAt: Date
     var lastModifiedAt: Date
     var isDemo: Bool
+    var demoType: DemoType?
 
     init(
         id: UUID = UUID(),
         name: String,
         createdAt: Date = Date(),
         lastModifiedAt: Date = Date(),
-        isDemo: Bool = false
+        isDemo: Bool = false,
+        demoType: DemoType? = nil
     ) {
         self.id = id
         self.name = name
         self.createdAt = createdAt
         self.lastModifiedAt = lastModifiedAt
         self.isDemo = isDemo
+        self.demoType = demoType
     }
 
     static let xorDemo = PlaygroundProject(
         name: "XOR Demo",
-        isDemo: true
+        isDemo: true,
+        demoType: .xor
+    )
+
+    static let linearDemo = PlaygroundProject(
+        name: "Linear Regression",
+        isDemo: true,
+        demoType: .linearRegression
     )
 
     // MARK: - Preview Image Persistence
@@ -133,9 +148,16 @@ class PlaygroundStore: ObservableObject {
     }
 
     private func seedDemoIfNeeded() {
-        if !projects.contains(where: { $0.isDemo }) {
+        var changed = false
+        if !projects.contains(where: { $0.demoType == .xor }) {
             projects.insert(.xorDemo, at: 0)
-            save()
+            changed = true
         }
+        if !projects.contains(where: { $0.demoType == .linearRegression }) {
+            let insertIdx = projects.firstIndex(where: { !$0.isDemo }) ?? projects.count
+            projects.insert(.linearDemo, at: insertIdx)
+            changed = true
+        }
+        if changed { save() }
     }
 }

@@ -42,8 +42,13 @@ struct ContentView: View {
                     onSelect: { project in
                         selectedProject = project
                         canvasViewModel.resetCanvas()
-                        if project.isDemo {
+                        switch project.demoType {
+                        case .xor:
                             canvasViewModel.setupMVPScenario()
+                        case .linearRegression:
+                            canvasViewModel.setupLinearRegressionDemo()
+                        case nil:
+                            break
                         }
                         navigate(to: .playground)
                     },

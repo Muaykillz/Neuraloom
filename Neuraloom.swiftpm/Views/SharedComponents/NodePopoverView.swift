@@ -344,6 +344,7 @@ struct ForwardTermBox: View {
         case .outputDisplay: return .green
         case .number:        return .teal
         case .annotation:    return .gray
+        case .scatterPlot:   return .teal
         }
     }
 
@@ -623,6 +624,7 @@ struct DeltaSectionView: View {
         case .outputDisplay: return .green
         case .number:        return .teal
         case .annotation:    return .gray
+        case .scatterPlot:   return .teal
         }
     }
 }

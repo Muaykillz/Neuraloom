@@ -51,13 +51,12 @@ struct AllPlaygroundsView: View {
             Button {
                 onDismiss()
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
-                    Text("Home")
-                        .font(.system(size: 16, weight: .medium, design: .rounded))
-                }
-                .foregroundStyle(.primary.opacity(0.7))
+                Image(systemName: "house.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.primary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
+                    .glassEffect(in: .circle)
             }
             .buttonStyle(.plain)
 
@@ -68,14 +67,8 @@ struct AllPlaygroundsView: View {
 
             Spacer()
 
-            // Invisible spacer to balance the back button
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 15, weight: .semibold))
-                Text("Home")
-                    .font(.system(size: 16, weight: .medium, design: .rounded))
-            }
-            .opacity(0)
+            Color.clear
+                .frame(width: 44, height: 44)
         }
     }
 
@@ -95,7 +88,7 @@ struct AllPlaygroundsView: View {
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 180)
+            .frame(height: 240)
             .background(
                 RoundedRectangle(cornerRadius: 16)
                     .fill(.ultraThinMaterial.opacity(0.5))
@@ -119,7 +112,7 @@ struct AllPlaygroundsView: View {
                 // Screenshot preview
                 PlaygroundPreviewImage(project: project)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 120)
+                    .frame(height: 180)
                     .clipped()
 
                 // Info bar
@@ -144,11 +137,28 @@ struct AllPlaygroundsView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
+
+                    if !project.isDemo {
+                        Menu {
+                            Button(role: .destructive) {
+                                store.delete(id: project.id)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 32, height: 32)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
             }
-            .frame(height: 180, alignment: .top)
+            .frame(height: 240, alignment: .top)
             .background(
                 RoundedRectangle(cornerRadius: 16)
                     .fill(.ultraThinMaterial)
@@ -160,15 +170,6 @@ struct AllPlaygroundsView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
-        .contextMenu {
-            if !project.isDemo {
-                Button(role: .destructive) {
-                    store.delete(id: project.id)
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-            }
-        }
     }
 }
 
@@ -188,12 +189,26 @@ private struct PlaygroundPreviewImage: View {
                     .clipped()
             } else {
                 ZStack {
-                    Color.primary.opacity(0.03)
-                    VStack(spacing: 6) {
-                        Image(systemName: project.isDemo ? "sparkles" : "square.grid.3x3.topleft.filled")
-                            .font(.system(size: 24, weight: .light))
-                            .foregroundStyle(.quaternary)
-                        if !project.isDemo {
+                    if project.isDemo {
+                        LinearGradient(
+                            colors: [.blue.opacity(0.08), .purple.opacity(0.08)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                        VStack(spacing: 8) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 28, weight: .light))
+                                .foregroundStyle(.blue.opacity(0.5))
+                            Text(project.name)
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.blue.opacity(0.5))
+                        }
+                    } else {
+                        Color.primary.opacity(0.03)
+                        VStack(spacing: 6) {
+                            Image(systemName: "square.grid.3x3.topleft.filled")
+                                .font(.system(size: 24, weight: .light))
+                                .foregroundStyle(.quaternary)
                             Text("No preview yet")
                                 .font(.system(size: 11, weight: .regular, design: .rounded))
                                 .foregroundStyle(.quaternary)

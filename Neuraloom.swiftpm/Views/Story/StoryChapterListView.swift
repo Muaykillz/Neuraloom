@@ -83,12 +83,20 @@ struct StoryChapterListView: View {
             // Playground phase
             if case .playground(let chapterID) = activePhase,
                let tourSteps = tourSteps(for: chapterID) {
-                StoryPlaygroundView(tourSteps: tourSteps) {
-                    progressManager.completedChapters.insert(chapterID)
-                    withAnimation(.easeInOut(duration: 0.4)) {
-                        activePhase = nil
+                StoryPlaygroundView(
+                    tourSteps: tourSteps,
+                    onFinish: {
+                        progressManager.completedChapters.insert(chapterID)
+                        withAnimation(.easeInOut(duration: 0.4)) {
+                            activePhase = nil
+                        }
+                    },
+                    onHome: {
+                        withAnimation(.easeInOut(duration: 0.4)) {
+                            activePhase = nil
+                        }
                     }
-                }
+                )
                 .transition(.scale(scale: 0.95).combined(with: .opacity))
             }
         }

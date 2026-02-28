@@ -298,7 +298,7 @@ struct PlaygroundView: View {
 
     private var inferenceSidebarContent: some View {
         List {
-            let analysisTypes: [NodeViewModel.NodeType] = [.loss]
+            let analysisTypes: [NodeViewModel.NodeType] = [.loss, .scatterPlot]
             let utilTypes: [NodeViewModel.NodeType] = [.outputDisplay, .number, .annotation]
             componentSection(title: "Analysis", types: analysisTypes)
             componentSection(title: "Utilities", types: utilTypes)
@@ -363,6 +363,8 @@ struct CanvasNodeView: View {
             DatasetNodeView(viewModel: viewModel, node: node)
         case .loss:
             LossNodeView(viewModel: viewModel, node: node)
+        case .scatterPlot:
+            ScatterPlotNodeView(viewModel: viewModel, node: node)
         case .outputDisplay:
             OutputDisplayNodeView(viewModel: viewModel, node: node)
         case .number:
@@ -412,6 +414,11 @@ struct ComponentItemView: View {
                     .fill(Color.teal)
                     .frame(width: 40, height: 40)
                     .overlay(Text("1.0").font(.caption2.bold()).foregroundColor(.white))
+            case .scatterPlot:
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.teal)
+                    .frame(width: 40, height: 40)
+                    .overlay(Image(systemName: "chart.dots.scatter").foregroundColor(.white))
             case .annotation:
                 Image(systemName: "note.text")
                     .font(.largeTitle)

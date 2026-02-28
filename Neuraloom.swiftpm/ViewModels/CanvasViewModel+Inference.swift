@@ -57,6 +57,11 @@ extension CanvasViewModel {
             }
         }
 
+        for i in nodes.indices where nodes[i].type == .scatterPlot {
+            nodes[i].scatterSeriesA.removeAll()
+            nodes[i].scatterSeriesB.removeAll()
+        }
+
         inferenceInputSource = .manual
         inferenceDatasetRowIndex = 0
 
@@ -90,6 +95,7 @@ extension CanvasViewModel {
         inferenceInputs = [:]
         inferenceOutputNodeIds = []
         autoOutputDisplayIds = []
+        autoPredict = false
         compiledInferenceNetwork = nil
         activeSampleIndex = nil
 
@@ -115,6 +121,8 @@ extension CanvasViewModel {
               let config = dsNode.datasetConfig else { return }
         let total = config.cachedRows.count
         guard total > 0, !isPredicting else { return }
+
+        clearScatterData()
 
         Task {
             for i in 0..<(total - 1) {
@@ -164,6 +172,7 @@ extension CanvasViewModel {
         updateDatasetPortDisplays(row: row)
 
         computeInferenceLoss(net: net)
+        updateScatterPlotNodes()
         compiledInferenceNetwork = net
     }
 
@@ -307,6 +316,7 @@ extension CanvasViewModel {
         }
 
         computeInferenceLoss(net: net)
+        updateScatterPlotNodes()
         compiledInferenceNetwork = net
     }
 
@@ -354,6 +364,93 @@ extension CanvasViewModel {
         }
 
         return nil
+    }
+
+    // MARK: - Auto Predict
+
+    /// Runs a silent (non-animated) forward pass when autoPredict is enabled.
+    func runAutoPredict() {
+        guard autoPredict, canvasMode == .inference, !isPredicting else { return }
+        switch inferenceInputSource {
+        case .manual:
+            Task { await runSilentManualInference() }
+        case .dataset:
+            guard let dsNode = nodes.first(where: { $0.type == .dataset }),
+                  let config = dsNode.datasetConfig else { return }
+            let rows = config.cachedRows
+            guard !rows.isEmpty else { return }
+            clearScatterData()
+            let inputCount = config.preset.inputColumnCount
+            let savedRow = inferenceDatasetRowIndex
+            Task {
+                for (i, row) in rows.enumerated() {
+                    selectDatasetRow(i)
+                    await runSilentInference(row: row, inputCount: inputCount)
+                }
+                selectDatasetRow(savedRow)
+            }
+        }
+    }
+
+    private func runSilentManualInference() async {
+        guard var net = compiledInferenceNetwork else { return }
+
+        let inputNeuronIds = nodes.filter { $0.isInput }.map(\.id)
+        var inputValues: [Double] = []
+        for neuronId in inputNeuronIds {
+            var value = 0.0
+            for conn in connections {
+                guard conn.targetNodeId == neuronId else { continue }
+                if let v = inferenceInputs[conn.sourceNodeId] {
+                    value = v
+                    break
+                }
+                if let srcNode = nodes.first(where: { $0.id == conn.sourceNodeId && $0.type == .number }) {
+                    value = srcNode.numberValue
+                    break
+                }
+            }
+            inputValues.append(value)
+        }
+
+        seedNetworkInputs(inputValues, into: &net)
+
+        let (layers, _) = computeNodeLayers()
+        let idToModelIdx = net.nodeVMIdToNodeIdx
+
+        for layer in layers {
+            computeLayerValues(layer: layer, idToModelIdx: idToModelIdx, net: &net)
+        }
+
+        updateAllOutputDisplays(net: net)
+        computeInferenceLoss(net: net)
+        updateScatterPlotNodes()
+        compiledInferenceNetwork = net
+    }
+
+    // MARK: - Scatter Plot Updates
+
+    private func clearScatterData() {
+        for i in nodes.indices where nodes[i].type == .scatterPlot {
+            nodes[i].scatterSeriesA.removeAll()
+            nodes[i].scatterSeriesB.removeAll()
+        }
+    }
+
+    private func updateScatterPlotNodes() {
+        for i in nodes.indices where nodes[i].type == .scatterPlot {
+            guard let config = nodes[i].scatterPlotConfig else { continue }
+            let x1 = resolvePortValue(portId: config.x1PortId)
+            let y1 = resolvePortValue(portId: config.y1PortId)
+            let x2 = resolvePortValue(portId: config.x2PortId)
+            let y2 = resolvePortValue(portId: config.y2PortId)
+            if let x = x1, let y = y1 {
+                nodes[i].scatterSeriesA.append((x: x, y: y))
+            }
+            if let x = x2, let y = y2 {
+                nodes[i].scatterSeriesB.append((x: x, y: y))
+            }
+        }
     }
 
     // MARK: - Live Weight Sync
