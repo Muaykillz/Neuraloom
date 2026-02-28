@@ -109,6 +109,25 @@ extension CanvasViewModel {
         }
     }
 
+    func runPredictAll() {
+        guard inferenceInputSource == .dataset,
+              let dsNode = nodes.first(where: { $0.type == .dataset }),
+              let config = dsNode.datasetConfig else { return }
+        let total = config.cachedRows.count
+        guard total > 0, !isPredicting else { return }
+
+        Task {
+            for i in 0..<(total - 1) {
+                guard !Task.isCancelled else { break }
+                selectDatasetRow(i)
+                await runSilentInference(row: config.cachedRows[i], inputCount: config.preset.inputColumnCount)
+                try? await Task.sleep(for: .milliseconds(60))
+            }
+            selectDatasetRow(total - 1)
+            await runDatasetRowInference()
+        }
+    }
+
     func selectDatasetRow(_ index: Int) {
         inferenceDatasetRowIndex = index
         activeSampleIndex = index
@@ -126,6 +145,26 @@ extension CanvasViewModel {
 
         activeSampleIndex = inferenceDatasetRowIndex
         await runAnimatedInference(inputOverride: inputValues)
+    }
+
+    private func runSilentInference(row: [Double], inputCount: Int) async {
+        guard var net = compiledInferenceNetwork else { return }
+
+        let inputValues = Array(row.prefix(inputCount))
+        seedNetworkInputs(inputValues, into: &net)
+
+        let (layers, _) = computeNodeLayers()
+        let idToModelIdx = net.nodeVMIdToNodeIdx
+
+        for layer in layers {
+            computeLayerValues(layer: layer, idToModelIdx: idToModelIdx, net: &net)
+        }
+
+        updateAllOutputDisplays(net: net)
+        updateDatasetPortDisplays(row: row)
+
+        computeInferenceLoss(net: net)
+        compiledInferenceNetwork = net
     }
 
     private func runAnimatedInference(inputOverride: [Double]? = nil) async {
@@ -164,16 +203,11 @@ extension CanvasViewModel {
             }
         }
 
-        for (i, idx) in net.model.inputNodeIndices.enumerated() {
-            if i < inputValues.count { net.model.nodeValues[idx] = inputValues[i] }
-        }
-        for idx in net.model.biasNodeIndices {
-            net.model.nodeValues[idx] = 1.0
-        }
+        seedNetworkInputs(inputValues, into: &net)
 
         for (vmId, modelIdx) in net.nodeVMIdToNodeIdx {
             if net.model.inputNodeIndices.contains(modelIdx) || net.model.biasNodeIndices.contains(modelIdx) {
-                await MainActor.run { nodeOutputs[vmId] = net.model.nodeValues[modelIdx] }
+                nodeOutputs[vmId] = net.model.nodeValues[modelIdx]
             }
         }
 
@@ -181,17 +215,9 @@ extension CanvasViewModel {
         let idToModelIdx = net.nodeVMIdToNodeIdx
 
         // Update Result nodes connected directly to dataset ports
-        if let dsNode = nodes.first(where: { $0.type == .dataset }),
-           let dsConfig = dsNode.datasetConfig,
-           inferenceInputSource == .dataset {
-            let row = dsConfig.cachedRows[inferenceDatasetRowIndex]
-            for conn in connections {
-                if let ci = dsConfig.columnPortIds.firstIndex(of: conn.sourceNodeId),
-                   let displayIdx = nodes.firstIndex(where: { $0.id == conn.targetNodeId && $0.type == .outputDisplay }) {
-                    let value = ci < row.count ? row[ci] : 0.0
-                    nodes[displayIdx].outputDisplayValue = value
-                }
-            }
+        if inferenceInputSource == .dataset,
+           let dsConfig = nodes.first(where: { $0.type == .dataset })?.datasetConfig {
+            updateDatasetPortDisplays(row: dsConfig.cachedRows[inferenceDatasetRowIndex])
         }
 
         // Animate from Dataset to Input Layer
@@ -230,8 +256,9 @@ extension CanvasViewModel {
                 return targetIsInCurrent && (sourceIsInPrevious || sourceIsBias || (layerIndex == 0 && sourceIsDatasetPort))
             }
 
-            let allSourceNodeIds = Set(incomingToCurrent.map { $0.sourceNodeId })
-                .union(nodes.filter({ $0.isBias && !connections.filter({ incomingToCurrent.map({ $0.id }).contains($0.id) }).map({ $0.sourceNodeId }).contains($0.id) }).map({ $0.id }))
+            let incomingSourceIds = Set(incomingToCurrent.map(\.sourceNodeId))
+            let extraBiasIds = Set(nodes.filter { $0.isBias && !incomingSourceIds.contains($0.id) }.map(\.id))
+            let allSourceNodeIds = incomingSourceIds.union(extraBiasIds)
 
             withAnimation(.easeIn(duration: edgeGlowDuration)) {
                 glowingNodeIds = allSourceNodeIds
@@ -243,22 +270,14 @@ extension CanvasViewModel {
                 glowingNodeIds.formUnion(currentLayerIds)
             }
 
+            computeLayerValues(layer: currentLayer, idToModelIdx: idToModelIdx, net: &net)
+
             for nodeId in currentLayer {
-                guard let modelIdx = idToModelIdx[nodeId], !net.model.inputNodeIndices.contains(modelIdx) else { continue }
-
-                var sum: Double = 0.0
-                for wIdx in net.model.nodeIncomingEdgeIndices[modelIdx] {
-                    let sourceNodeIdx = net.model.edgeSourceNodeIndices[wIdx]
-                    sum += net.model.nodeValues[sourceNodeIdx] * net.model.weightValues[wIdx]
-                }
-                net.model.nodeValues[modelIdx] = net.model.nodeActivations[modelIdx].forward(sum)
-
-                await MainActor.run {
-                    nodeOutputs[nodeId] = net.model.nodeValues[modelIdx]
-                    for outId in autoOutputDisplayIds where connections.contains(where: { $0.sourceNodeId == nodeId && $0.targetNodeId == outId }) {
-                        if let nodeIdxToUpdate = nodes.firstIndex(where: { $0.id == outId }) {
-                            nodes[nodeIdxToUpdate].outputDisplayValue = net.model.nodeValues[modelIdx]
-                        }
+                guard let modelIdx = idToModelIdx[nodeId] else { continue }
+                nodeOutputs[nodeId] = net.model.nodeValues[modelIdx]
+                for outId in autoOutputDisplayIds where connections.contains(where: { $0.sourceNodeId == nodeId && $0.targetNodeId == outId }) {
+                    if let nodeIdxToUpdate = nodes.firstIndex(where: { $0.id == outId }) {
+                        nodes[nodeIdxToUpdate].outputDisplayValue = net.model.nodeValues[modelIdx]
                     }
                 }
             }
@@ -348,6 +367,53 @@ extension CanvasViewModel {
         compiledInferenceNetwork = net
     }
 
+    // MARK: - Inference Helpers
+
+    private func seedNetworkInputs(_ inputValues: [Double], into net: inout TrainingService.CompiledNetwork) {
+        for (i, idx) in net.model.inputNodeIndices.enumerated() {
+            if i < inputValues.count { net.model.nodeValues[idx] = inputValues[i] }
+        }
+        for idx in net.model.biasNodeIndices {
+            net.model.nodeValues[idx] = 1.0
+        }
+    }
+
+    private func computeLayerValues(layer: [UUID], idToModelIdx: [UUID: Int], net: inout TrainingService.CompiledNetwork) {
+        for nodeId in layer {
+            guard let modelIdx = idToModelIdx[nodeId],
+                  !net.model.inputNodeIndices.contains(modelIdx) else { continue }
+            var sum = 0.0
+            for wIdx in net.model.nodeIncomingEdgeIndices[modelIdx] {
+                let src = net.model.edgeSourceNodeIndices[wIdx]
+                sum += net.model.nodeValues[src] * net.model.weightValues[wIdx]
+            }
+            net.model.nodeValues[modelIdx] = net.model.nodeActivations[modelIdx].forward(sum)
+        }
+    }
+
+    private func updateDatasetPortDisplays(row: [Double]) {
+        guard let dsConfig = nodes.first(where: { $0.type == .dataset })?.datasetConfig else { return }
+        for conn in connections {
+            if let ci = dsConfig.columnPortIds.firstIndex(of: conn.sourceNodeId),
+               let displayIdx = nodes.firstIndex(where: { $0.id == conn.targetNodeId && $0.type == .outputDisplay }) {
+                nodes[displayIdx].outputDisplayValue = ci < row.count ? row[ci] : 0.0
+            }
+        }
+    }
+
+    private func updateAllOutputDisplays(net: TrainingService.CompiledNetwork) {
+        for (vmId, modelIdx) in net.nodeVMIdToNodeIdx {
+            nodeOutputs[vmId] = net.model.nodeValues[modelIdx]
+        }
+        for outId in autoOutputDisplayIds {
+            if let conn = connections.first(where: { $0.targetNodeId == outId }),
+               let val = nodeOutputs[conn.sourceNodeId],
+               let idx = nodes.firstIndex(where: { $0.id == outId }) {
+                nodes[idx].outputDisplayValue = val
+            }
+        }
+    }
+
     // MARK: - Node Layers
 
     func computeNodeLayers() -> (layers: [[UUID]], maxDepth: Int) {
@@ -385,13 +451,9 @@ extension CanvasViewModel {
 
     // MARK: - Visible Nodes/Connections (filtered by mode)
 
-    private var inferenceHiddenNodeTypes: Set<NodeViewModel.NodeType> {
-        [.visualization]
-    }
-
     /// Node IDs hidden in inference: visualization nodes + train-mode (non-temporary) loss nodes.
     private var inferenceHiddenNodeIds: Set<UUID> {
-        var ids = Set(nodes.filter { inferenceHiddenNodeTypes.contains($0.type) }.map(\.id))
+        var ids = Set(nodes.filter { $0.type == .visualization }.map(\.id))
         // Hide train-mode loss nodes but keep temporary ones added during inference
         for node in nodes where node.type == .loss && !inferenceTemporaryNodeIds.contains(node.id) {
             ids.insert(node.id)
