@@ -18,6 +18,7 @@ struct LossNodeView: View {
             cardBody
                 .onTapGesture {
                     viewModel.selectedNodeId = (viewModel.selectedNodeId == node.id) ? nil : node.id
+                    viewModel.fulfillTourCondition(.custom(id: "lossTapped"))
                 }
                 .popover(isPresented: Binding(
                     get: { viewModel.selectedNodeId == node.id },
@@ -113,7 +114,7 @@ struct LossNodeView: View {
                 .padding(.horizontal, 10)
                 .padding(.top, 8)
 
-                Text(viewModel.currentLoss.map { String(format: "%.4f", $0) } ?? "—")
+                Text(viewModel.currentLoss.map { clippedFmt($0) } ?? "—")
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(lossColor)
                     .frame(maxWidth: .infinity)

@@ -26,7 +26,7 @@ struct NeuronNodeView: View {
 
     private var displayLabel: String {
         if viewModel.inspectMode, let val = viewModel.nodeOutputs[node.id] {
-            return String(format: "%.2f", val)
+            return clippedFmt(val, decimals: 2)
         }
         return roleLabel
     }

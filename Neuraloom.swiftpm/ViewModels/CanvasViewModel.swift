@@ -7,6 +7,8 @@ class CanvasViewModel: ObservableObject {
 
     @Published var scale: CGFloat = 1.0
     @Published var offset: CGSize = .zero
+    var viewportSize: CGSize = .zero
+    var viewportInsets: EdgeInsets = EdgeInsets()
 
     @Published var activeWiringSource: UUID? = nil
     @Published var wiringTargetPosition: CGPoint? = nil
@@ -29,6 +31,7 @@ class CanvasViewModel: ObservableObject {
     @Published var lossHistory: [Double] = []
     @Published var stepGranularity: StepGranularity = .epoch
     @Published var activeSampleIndex: Int? = nil
+    @Published var activeSampleTarget: [Double]? = nil
     @Published var stepCount = 0
     @Published var playgroundMode: PlaygroundMode = .dev {
         didSet {
@@ -42,9 +45,19 @@ class CanvasViewModel: ObservableObject {
     // MARK: - Tour Condition Tracking
 
     @Published var fulfilledTourConditions: Set<String> = []
+    @Published var storyHideExitInference = false
+    @Published var storyHideInferencePanel = false
+    @Published var storyStepCounter: Int = 0
+    @Published var storyLRChanged: Bool = false
+    @Published var storyExpandTrainingPanel: Bool = false
+    @Published var storySidebarOpen: Bool = false
 
     func fulfillTourCondition(_ condition: TourCompletionCondition) {
         fulfilledTourConditions.insert(condition.key)
+    }
+
+    func clearTourCondition(_ condition: TourCompletionCondition) {
+        fulfilledTourConditions.remove(condition.key)
     }
     var inspectMode: Bool { playgroundMode == .inspect }
     @Published var nodeOutputs: [UUID: Double] = [:]
@@ -68,6 +81,7 @@ class CanvasViewModel: ObservableObject {
     @Published var inferenceInputSource: InferenceInputSource = .manual
     @Published var predictAllMode: Bool = true
     @Published var autoPredict: Bool = false
+    var inferenceAnimationScale: Double = 1.0
     @Published var inferenceDatasetRowIndex: Int = 0
     var savedPlaygroundMode: PlaygroundMode = .dev
     var savedSelectedNodeId: UUID?
@@ -104,6 +118,7 @@ class CanvasViewModel: ObservableObject {
         lossHistory = []
         stepCount = 0
         activeSampleIndex = nil
+        activeSampleTarget = nil
         stepPhase = nil
         glowingNodeIds = []
         glowingConnectionIds = []
@@ -111,6 +126,11 @@ class CanvasViewModel: ObservableObject {
         nodeOutputs = [:]
         nodeGradients = [:]
         fulfilledTourConditions = []
+        storyHideExitInference = false
+        storyHideInferencePanel = false
+        storyStepCounter = 0
+        storyLRChanged = false
+        storyExpandTrainingPanel = false
         canvasMode = .train
         inferenceInputs = [:]
         inferenceInputInfos = []
@@ -123,6 +143,7 @@ class CanvasViewModel: ObservableObject {
         inferenceInputSource = .manual
         inferenceDatasetRowIndex = 0
         autoPredict = false
+        inferenceAnimationScale = 1.0
         compiledInferenceNetwork = nil
         playgroundMode = .dev
         lastMagnification = 1.0
@@ -169,6 +190,99 @@ class CanvasViewModel: ObservableObject {
         addConnection(from: dsConfig.columnPortIds[2], to: lossConfig.truePortId)
 
         addConnection(from: lossId, to: vizId)
+    }
+
+    // MARK: - Chapter 1: Hello, Neuron
+
+    func setupChapter1Scenario() {
+        let ids = Chapter1IDs.self
+
+        var numberNode = NodeViewModel(id: ids.numberIn, position: CGPoint(x: -100, y: 300), type: .number)
+        numberNode.numberValue = 3.0
+
+        nodes = [
+            numberNode,
+            NodeViewModel(id: ids.inputX1, position: CGPoint(x: 100, y: 300), type: .neuron, activation: .linear, role: .input),
+            NodeViewModel(id: ids.bias1, position: CGPoint(x: 100, y: 450), type: .neuron, activation: .linear, role: .bias),
+            NodeViewModel(id: ids.neuronOut, position: CGPoint(x: 400, y: 350), type: .neuron, activation: .linear, role: .output),
+        ]
+
+        addConnection(from: ids.numberIn, to: ids.inputX1)
+        addConnection(id: ids.weightW, from: ids.inputX1, to: ids.neuronOut, value: 0.5)
+        addConnection(id: ids.weightB, from: ids.bias1, to: ids.neuronOut, value: 0.0)
+
+        // Enter inference mode so the Result node is auto-created
+        enterInferenceMode()
+    }
+
+    // MARK: - Chapter 2: The Art of Learning
+
+    func setupChapter2Scenario() {
+        let ids = Chapter2IDs.self
+
+        var dsConfig = DatasetNodeConfig(preset: .linear)
+        dsConfig.columnPortIds = [ids.dsPortX, ids.dsPortY]
+
+        let lossConfig = LossNodeConfig(predPortId: ids.lossPred, truePortId: ids.lossTrue)
+
+        nodes = [
+            {
+                var n = NodeViewModel(id: ids.dataset, position: CGPoint(x: -150, y: 300), type: .dataset)
+                n.datasetConfig = dsConfig
+                return n
+            }(),
+            NodeViewModel(id: ids.inputX1, position: CGPoint(x: 100, y: 300), type: .neuron, activation: .linear, role: .input),
+            NodeViewModel(id: ids.bias1, position: CGPoint(x: 100, y: 450), type: .neuron, activation: .linear, role: .bias),
+            NodeViewModel(id: ids.neuronOut, position: CGPoint(x: 400, y: 350), type: .neuron, activation: .linear, role: .output),
+            {
+                var n = NodeViewModel(id: ids.loss1, position: CGPoint(x: 600, y: 350), type: .loss)
+                n.lossConfig = lossConfig
+                return n
+            }(),
+            NodeViewModel(id: ids.viz1, position: CGPoint(x: 850, y: 350), type: .visualization)
+        ]
+
+        // Dataset[X] → Input
+        addConnection(from: ids.dsPortX, to: ids.inputX1)
+        // Input → Output (weight W)
+        addConnection(id: ids.weightW, from: ids.inputX1, to: ids.neuronOut, value: 0.5)
+        // Bias → Output (weight B)
+        addConnection(id: ids.weightB, from: ids.bias1, to: ids.neuronOut, value: 0.0)
+        // Output → Loss[ŷ]
+        addConnection(from: ids.neuronOut, to: ids.lossPred)
+        // Dataset[Y] → Loss[y]
+        addConnection(from: ids.dsPortY, to: ids.lossTrue)
+        // Loss → Viz
+        addConnection(from: ids.loss1, to: ids.viz1)
+
+        // Inspect mode: teaching concepts, not building
+        playgroundMode = .inspect
+        totalEpochs = 20
+        storyStepCounter = 0
+        storyLRChanged = false
+    }
+
+    // MARK: - Chapter 3: Build-Your-Own
+
+    func setupChapter3Scenario() {
+        let ids = Chapter3IDs.self
+
+        var dsConfig = DatasetNodeConfig(preset: .linear)
+        dsConfig.columnPortIds = [ids.dsPortX, ids.dsPortY]
+
+        nodes = [
+            {
+                var n = NodeViewModel(id: ids.dataset, position: CGPoint(x: -150, y: 350), type: .dataset)
+                n.datasetConfig = dsConfig
+                return n
+            }()
+        ]
+
+        connections = []
+        playgroundMode = .dev
+        totalEpochs = 20
+        storyStepCounter = 0
+        storyLRChanged = false
     }
 
     // MARK: - Linear Regression Demo

@@ -165,12 +165,30 @@ The playground loads with a pre-configured network via a setup function (e.g. `s
 - Initial weight values
 - Dataset preset
 
-### Two Modes Available to User
+### Two Modes: Train vs Inference
 
-| Mode | Purpose | Key Visuals |
-|------|---------|-------------|
-| **Train** | Build network, train, observe loss | All nodes visible, training panel |
-| **Inference** | Feed inputs, see predictions | Auto-creates Result nodes, prediction panel |
+|  | **Train Mode** | **Inference Mode** |
+|--|----------------|-------------------|
+| **Purpose** | Teach the network by running many samples through it and updating weights via gradient descent | Feed a single input and watch how the network computes its output |
+| **What runs** | Full training loop (forward + backward + weight update) across all dataset rows | A single forward pass for one input |
+| **Sidebar panel** | Training controls: LR, step granularity, epoch count, Train/Step/Reset buttons | Inference controls: input source (manual sliders / dataset row), Predict / Predict All, Auto Predict toggle |
+| **Visible nodes** | All nodes (dataset, neurons, loss, viz) | Neurons + auto-created Result nodes; loss & viz are hidden |
+| **Key animation** | Loss curve updating in real-time on Visualization node | Layer-by-layer glow propagating from input → output |
+| **Weight changes** | Weights update automatically via optimizer after each step | Weights stay fixed (but user can drag sliders to tweak manually) |
+| **Inspect sub-mode** | Shows forward values, error signals (delta), gradient derivation, update formula (w_new = w_old - lr * grad) | Shows forward values and computation breakdown only (no gradients — no backward pass ran) |
+| **Best for teaching** | Gradient descent, backpropagation, loss functions, learning rate effects, overfitting | Forward pass, what a neuron computes, effect of weights/bias, predictions, decision boundaries |
+
+### Teaching Tip: Forward Pass → Use Inference Mode
+
+If you want to teach **what a neuron does** or **how a forward pass works**, prefer Inference mode over Train mode:
+
+- In Inference, the user controls **one input at a time** (via sliders or dataset row picker), making it easy to see cause → effect.
+- The **layer-by-layer glow** animation visually traces the signal from input to output — perfect for "watch the data flow" moments.
+- **Weight sliders** let the user manually adjust `w` and `b` and instantly see how the output changes, without the complexity of a training loop.
+- **Inspect sub-mode** shows the computation breakdown (`z = w·x + b`) without the noise of gradients and update formulas.
+- Train mode runs all samples at once and updates weights automatically — too much happening to isolate "what does one neuron do?"
+
+In short: **Inference = magnifying glass** (zoom in on one computation), **Train = time-lapse** (watch the network learn over many steps).
 
 ### Two Sub-modes
 

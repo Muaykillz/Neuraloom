@@ -19,6 +19,7 @@ struct TrainingUpdate: Sendable {
     let weightSync: [UUID: (value: Double, gradient: Double)]
     let nodeSync: [UUID: (value: Double, gradient: Double)]
     let sampleIndex: Int?  // original row index in preset.rows (nil for epoch/async)
+    let sampleTarget: [Double]?  // ground-truth target for the current sample
     let phase: StepPhase?  // nil for epoch mode / async
 }
 
@@ -206,7 +207,7 @@ final class TrainingService {
                     for (vmId, idx) in nodeVMMap {
                         nSync[vmId] = (m.nodeValues[idx], m.nodeGradients[idx])
                     }
-                    await onUpdate(TrainingUpdate(epoch: epoch, loss: loss, weightSync: sync, nodeSync: nSync, sampleIndex: nil, phase: nil))
+                    await onUpdate(TrainingUpdate(epoch: epoch, loss: loss, weightSync: sync, nodeSync: nSync, sampleIndex: nil, sampleTarget: nil, phase: nil))
                 }
             }
 
@@ -254,7 +255,7 @@ final class TrainingService {
         )
         steppingNetwork = net
         stepEpoch += 1
-        onUpdate(TrainingUpdate(epoch: stepEpoch, loss: loss, weightSync: syncWeightsDict(from: net), nodeSync: syncNodesDict(from: net), sampleIndex: nil, phase: nil))
+        onUpdate(TrainingUpdate(epoch: stepEpoch, loss: loss, weightSync: syncWeightsDict(from: net), nodeSync: syncNodesDict(from: net), sampleIndex: nil, sampleTarget: nil, phase: nil))
     }
 
     private func stepOneSample(
@@ -302,7 +303,8 @@ final class TrainingService {
                 epoch: stepEpoch, loss: loss,
                 weightSync: syncWeightsDict(from: net),
                 nodeSync: syncNodesDict(from: net),
-                sampleIndex: sample.index, phase: .forward
+                sampleIndex: sample.index, sampleTarget: sample.output,
+                phase: .forward
             ))
 
         case .backward:
@@ -321,7 +323,8 @@ final class TrainingService {
                 epoch: stepEpoch, loss: loss,
                 weightSync: syncWeightsDict(from: net),
                 nodeSync: syncNodesDict(from: net),
-                sampleIndex: sample.index, phase: .backward
+                sampleIndex: sample.index, sampleTarget: sample.output,
+                phase: .backward
             ))
         }
     }

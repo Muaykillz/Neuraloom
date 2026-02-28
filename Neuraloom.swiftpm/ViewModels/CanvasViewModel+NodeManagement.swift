@@ -24,6 +24,7 @@ extension CanvasViewModel {
             nodes.append(newNode)
         }
         fulfillTourCondition(.nodeAdded)
+        fulfillTourCondition(.custom(id: "\(type.rawValue)Added"))
     }
 
     func deleteNode(id: UUID) {
@@ -106,6 +107,13 @@ extension CanvasViewModel {
         }
     }
 
+    /// Add a connection with an explicit ID and initial value (for story setups).
+    func addConnection(id: UUID, from sourceId: UUID, to targetId: UUID, value: Double) {
+        guard !connections.contains(where: { $0.sourceNodeId == sourceId && $0.targetNodeId == targetId }) else { return }
+        let conn = ConnectionViewModel(id: id, sourceNodeId: sourceId, targetNodeId: targetId, value: value)
+        connections.append(conn)
+    }
+
     func deleteConnection(id: UUID) {
         withAnimation(.spring()) {
             connections.removeAll { $0.id == id }
@@ -115,7 +123,8 @@ extension CanvasViewModel {
     func updateConnectionValue(id: UUID, value: Double) {
         if let idx = connections.firstIndex(where: { $0.id == id }) {
             connections[idx].value = value
-            fulfillTourCondition(.weightChanged)
+            fulfillTourCondition(.weightChanged())
+            fulfillTourCondition(.weightChanged(connectionId: id))
             if canvasMode == .inference {
                 syncWeightToInferenceNetwork(connectionId: id, newValue: value)
             } else {

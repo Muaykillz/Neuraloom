@@ -289,15 +289,27 @@ struct WeightGradientBreakdownView: View {
 // MARK: - Smart number formatting (shared)
 
 /// Compact formatter: trims trailing zeros, caps at 4 decimal places.
-/// e.g. 0.1 → "0.1", 1.0 → "1", 0.0052 → "0.0052", -3.50 → "-3.5"
+/// Clips to ±9999 to prevent display overflow.
 func compactFmt(_ v: Double) -> String {
     if v == 0 { return "0" }
+    if v.isNaN { return "NaN" }
+    if v.isInfinite { return v > 0 ? "∞" : "-∞" }
+    if v > 9999 { return ">9999" }
+    if v < -9999 { return "<-9999" }
     let s = String(format: "%.4f", v)
-    // Trim trailing zeros after decimal point
     var trimmed = s
     if trimmed.contains(".") {
         while trimmed.hasSuffix("0") { trimmed.removeLast() }
         if trimmed.hasSuffix(".") { trimmed.removeLast() }
     }
     return trimmed
+}
+
+/// Format a Double for display, clipped to ±9999.
+func clippedFmt(_ v: Double, decimals: Int = 4) -> String {
+    if v.isNaN { return "NaN" }
+    if v.isInfinite { return v > 0 ? "∞" : "-∞" }
+    if v > 9999 { return ">9999" }
+    if v < -9999 { return "<-9999" }
+    return String(format: "%.\(decimals)f", v)
 }

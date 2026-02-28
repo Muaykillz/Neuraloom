@@ -80,7 +80,7 @@ struct VisualizationNodeView: View {
                     .padding(.horizontal, 10)
 
                     if let loss = viewModel.currentLoss {
-                        Text(String(format: "%.4f", loss))
+                        Text(clippedFmt(loss))
                             .font(.system(size: 9, design: .monospaced).bold())
                             .foregroundStyle(.purple)
                             .padding(.horizontal, 12)

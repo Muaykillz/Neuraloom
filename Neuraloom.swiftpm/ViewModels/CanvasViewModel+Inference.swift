@@ -133,6 +133,7 @@ extension CanvasViewModel {
             }
             selectDatasetRow(total - 1)
             await runDatasetRowInference()
+            fulfillTourCondition(.custom(id: "predictedAll"))
         }
     }
 
@@ -184,10 +185,12 @@ extension CanvasViewModel {
         defer {
             isPredicting = false
             withAnimation(.easeOut(duration: 0.2)) { clearGlow() }
+            fulfillTourCondition(.custom(id: "predicted"))
         }
 
-        let edgeGlowDuration: TimeInterval = 0.1
-        let nodeGlowDuration: TimeInterval = 0.15
+        let scale = inferenceAnimationScale
+        let edgeGlowDuration: TimeInterval = 0.1 * scale
+        let nodeGlowDuration: TimeInterval = 0.15 * scale
 
         let inputNeuronIds = nodes.filter { $0.isInput }.map(\.id)
         var inputValues: [Double]
@@ -229,48 +232,77 @@ extension CanvasViewModel {
             updateDatasetPortDisplays(row: dsConfig.cachedRows[inferenceDatasetRowIndex])
         }
 
-        // Animate from Dataset to Input Layer
+        // Animate from Dataset to Input Layer (only when a dataset node exists)
         let datasetNodeIds = Set(nodes.filter { $0.type == .dataset }.map(\.id))
-        let inputLayerIds = Set(layers.first ?? [])
-        let datasetConnections = connections.filter { c in
-            let isTargetInput = inputLayerIds.contains(c.targetNodeId)
-            let portIds = nodes.first(where: { $0.type == .dataset })?.datasetConfig?.columnPortIds ?? []
-            return isTargetInput && portIds.contains(c.sourceNodeId)
+        let hasDataset = !datasetNodeIds.isEmpty
+
+        if hasDataset {
+            let inputLayerIds = Set(layers.first ?? [])
+            let datasetConnections = connections.filter { c in
+                let isTargetInput = inputLayerIds.contains(c.targetNodeId)
+                let portIds = nodes.first(where: { $0.type == .dataset })?.datasetConfig?.columnPortIds ?? []
+                return isTargetInput && portIds.contains(c.sourceNodeId)
+            }
+
+            withAnimation(.easeIn(duration: edgeGlowDuration)) {
+                glowingNodeIds = datasetNodeIds
+                glowingConnectionIds = Set(datasetConnections.map { $0.id })
+            }
+            try? await Task.sleep(for: .seconds(edgeGlowDuration))
+
+            withAnimation(.easeIn(duration: nodeGlowDuration)) {
+                glowingNodeIds.formUnion(inputLayerIds)
+            }
+            try? await Task.sleep(for: .seconds(nodeGlowDuration))
         }
 
-        withAnimation(.easeIn(duration: edgeGlowDuration)) {
-            glowingNodeIds = datasetNodeIds
-            glowingConnectionIds = Set(datasetConnections.map { $0.id })
-        }
-        try? await Task.sleep(for: .seconds(edgeGlowDuration))
+        // When no dataset, glow input + bias together first, then animate from layer 1 onward
+        let biasIds = Set(nodes.filter { $0.isBias }.map(\.id))
+        let startLayerIndex: Int
 
-        withAnimation(.easeIn(duration: nodeGlowDuration)) {
-            glowingNodeIds.formUnion(inputLayerIds)
+        if !hasDataset {
+            let inputLayerIds = Set(layers.first ?? [])
+            withAnimation(.easeIn(duration: nodeGlowDuration)) {
+                glowingNodeIds = inputLayerIds.union(biasIds)
+            }
+            // Compute input layer values (no-op for input neurons but keeps consistency)
+            if let firstLayer = layers.first {
+                computeLayerValues(layer: firstLayer, idToModelIdx: idToModelIdx, net: &net)
+            }
+            try? await Task.sleep(for: .seconds(nodeGlowDuration))
+            startLayerIndex = 1
+        } else {
+            startLayerIndex = 0
         }
-        try? await Task.sleep(for: .seconds(nodeGlowDuration))
 
-        // Animate through hidden/output layers
-        for (layerIndex, currentLayer) in layers.enumerated() {
+        // Animate through layers
+        for layerIndex in startLayerIndex..<layers.count {
             guard !Task.isCancelled else { break }
-
-            let sourceLayerIds = (layerIndex == 0) ? datasetNodeIds : Set(layers[layerIndex - 1])
+            let currentLayer = layers[layerIndex]
             let currentLayerIds = Set(currentLayer)
+
+            let sourceLayerIds: Set<UUID>
+            if layerIndex == 0 && hasDataset {
+                sourceLayerIds = datasetNodeIds
+            } else if layerIndex > 0 {
+                sourceLayerIds = Set(layers[layerIndex - 1]).union(biasIds)
+            } else {
+                sourceLayerIds = Set<UUID>()
+            }
 
             let incomingToCurrent = connections.filter { conn in
                 let targetIsInCurrent = currentLayerIds.contains(conn.targetNodeId)
                 let sourceIsInPrevious = sourceLayerIds.contains(conn.sourceNodeId)
                 let sourceIsBias = nodes.first(where: { $0.id == conn.sourceNodeId })?.isBias ?? false
-                let sourceIsDatasetPort = datasetNodeIds.contains(conn.sourceNodeId)
-                    || (nodes.first(where: { $0.type == .dataset })?.datasetConfig?.columnPortIds.contains(conn.sourceNodeId) ?? false)
+                let sourceIsDatasetPort = hasDataset && (datasetNodeIds.contains(conn.sourceNodeId)
+                    || (nodes.first(where: { $0.type == .dataset })?.datasetConfig?.columnPortIds.contains(conn.sourceNodeId) ?? false))
                 return targetIsInCurrent && (sourceIsInPrevious || sourceIsBias || (layerIndex == 0 && sourceIsDatasetPort))
             }
 
             let incomingSourceIds = Set(incomingToCurrent.map(\.sourceNodeId))
-            let extraBiasIds = Set(nodes.filter { $0.isBias && !incomingSourceIds.contains($0.id) }.map(\.id))
-            let allSourceNodeIds = incomingSourceIds.union(extraBiasIds)
 
             withAnimation(.easeIn(duration: edgeGlowDuration)) {
-                glowingNodeIds = allSourceNodeIds
+                glowingNodeIds = incomingSourceIds
                 glowingConnectionIds = Set(incomingToCurrent.map { $0.id })
             }
             try? await Task.sleep(for: .seconds(edgeGlowDuration))

@@ -18,7 +18,7 @@ extension CanvasViewModel {
         let availableHeight = size.height - insets.top - insets.bottom
         let scaleX = availableWidth / contentWidth
         let scaleY = availableHeight / contentHeight
-        let newScale = min(min(scaleX, scaleY) * 0.8, 2.0)
+        let newScale = min(min(scaleX, scaleY) * 0.8, 1.0)
         let clampedScale = max(newScale, 0.5)
         let screenCenter = CGPoint(
             x: insets.leading + size.width / 2,
@@ -29,6 +29,30 @@ extension CanvasViewModel {
             height: screenCenter.y - (contentCenter.y * clampedScale)
         )
         withAnimation(.spring()) { scale = clampedScale; offset = newOffset }
+    }
+
+    /// Zoom and center the viewport on a specific node.
+    /// `verticalBias` shifts the node away from center: positive = push node toward bottom of screen.
+    func zoomToNode(id: UUID, zoomScale: CGFloat = 1.5, verticalBias: CGFloat = 0) {
+        guard let node = nodes.first(where: { $0.id == id }) else { return }
+        let size = viewportSize
+        guard size.width > 0 else { return }
+        let availableHeight = size.height - viewportInsets.top - viewportInsets.bottom
+        let screenCenter = CGPoint(
+            x: viewportInsets.leading + size.width / 2,
+            y: viewportInsets.top + availableHeight / 2 + verticalBias
+        )
+        let newOffset = CGSize(
+            width: screenCenter.x - (node.position.x * zoomScale),
+            height: screenCenter.y - (node.position.y * zoomScale)
+        )
+        withAnimation(.spring()) { scale = zoomScale; offset = newOffset }
+    }
+
+    /// Fit to screen using the stored viewport size.
+    func fitToScreenStored() {
+        guard viewportSize.width > 0 else { return }
+        fitToScreen(in: viewportSize, insets: viewportInsets)
     }
 
     // MARK: - Auto Layout

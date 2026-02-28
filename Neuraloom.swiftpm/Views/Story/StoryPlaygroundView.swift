@@ -4,6 +4,7 @@ struct StoryPlaygroundView: View {
     let tourSteps: [TourStep]
     let onFinish: () -> Void
     var onHome: (() -> Void)?
+    var canvasSetup: ((CanvasViewModel) -> Void)?
 
     @StateObject private var canvasViewModel = CanvasViewModel()
     @State private var currentTourStep = 0
@@ -30,18 +31,30 @@ struct StoryPlaygroundView: View {
         }
         .animation(.easeInOut(duration: 0.3), value: tourDismissed)
         .onAppear {
-            canvasViewModel.setupMVPScenario()
+            if let setup = canvasSetup {
+                setup(canvasViewModel)
+            } else {
+                canvasViewModel.setupMVPScenario()
+            }
             canvasViewModel.fulfilledTourConditions = []
             applyHighlight(for: currentTourStep)
+            // Delay initial onEnter so PlaygroundView has time to set viewportSize
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                tourSteps[currentTourStep].onEnter?(canvasViewModel)
+            }
         }
         .onChange(of: currentTourStep) { _, newStep in
             clearHighlight(for: newStep == 0 ? 0 : newStep - 1)
             applyHighlight(for: newStep)
+            tourSteps[newStep].onEnter?(canvasViewModel)
+        }
+        .onChange(of: canvasViewModel.learningRate) { _, _ in
+            canvasViewModel.storyLRChanged = true
         }
         .onChange(of: canvasViewModel.selectedConnectionId) { _, newId in
-            if newId != nil {
-                canvasViewModel.fulfillTourCondition(.weightTapped)
-            }
+            guard let connId = newId else { return }
+            canvasViewModel.fulfillTourCondition(.weightTapped())
+            canvasViewModel.fulfillTourCondition(.weightTapped(connectionId: connId))
         }
     }
 
@@ -65,22 +78,9 @@ struct StoryPlaygroundView: View {
         case .node(let id):
             canvasViewModel.selectedNodeId = id
 
-        case .connection(let id):
+        case .connection(let id), .weight(let id):
             canvasViewModel.selectedConnectionId = id
-            // Compute screen-space midpoint for the weight popover
-            if let conn = canvasViewModel.connections.first(where: { $0.id == id }),
-               let sourceNode = canvasViewModel.nodes.first(where: { $0.id == conn.sourceNodeId }),
-               let targetNode = canvasViewModel.nodes.first(where: { $0.id == conn.targetNodeId }) {
-                let midCanvas = CGPoint(
-                    x: (sourceNode.position.x + targetNode.position.x) / 2,
-                    y: (sourceNode.position.y + targetNode.position.y) / 2
-                )
-                let screenPt = CGPoint(
-                    x: midCanvas.x * canvasViewModel.scale + canvasViewModel.offset.width,
-                    y: midCanvas.y * canvasViewModel.scale + canvasViewModel.offset.height
-                )
-                canvasViewModel.connectionTapGlobalLocation = screenPt
-            }
+            setConnectionPopoverLocation(for: id)
 
         case .glowNodes(let ids):
             canvasViewModel.glowingNodeIds = ids
@@ -95,12 +95,27 @@ struct StoryPlaygroundView: View {
         case .node:
             canvasViewModel.selectedNodeId = nil
 
-        case .connection:
+        case .connection, .weight:
             canvasViewModel.selectedConnectionId = nil
             canvasViewModel.connectionTapGlobalLocation = nil
 
         case .glowNodes:
             canvasViewModel.glowingNodeIds = []
         }
+    }
+
+    private func setConnectionPopoverLocation(for connectionId: UUID) {
+        guard let conn = canvasViewModel.connections.first(where: { $0.id == connectionId }),
+              let sourceNode = canvasViewModel.nodes.first(where: { $0.id == conn.sourceNodeId }),
+              let targetNode = canvasViewModel.nodes.first(where: { $0.id == conn.targetNodeId }) else { return }
+
+        let midCanvas = CGPoint(
+            x: (sourceNode.position.x + targetNode.position.x) / 2,
+            y: (sourceNode.position.y + targetNode.position.y) / 2
+        )
+        canvasViewModel.connectionTapGlobalLocation = CGPoint(
+            x: midCanvas.x * canvasViewModel.scale + canvasViewModel.offset.width,
+            y: midCanvas.y * canvasViewModel.scale + canvasViewModel.offset.height
+        )
     }
 }

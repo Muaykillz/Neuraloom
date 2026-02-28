@@ -9,6 +9,9 @@ extension CanvasViewModel {
 
         isTraining = true
         fulfillTourCondition(.trainStarted)
+        if storyLRChanged {
+            fulfillTourCondition(.custom(id: "lrChanged"))
+        }
 
         if currentEpoch == 0 && stepCount == 0 {
             lossHistory = []
@@ -119,7 +122,15 @@ extension CanvasViewModel {
             self.applyNodeSync(update.nodeSync)
             self.stepPhase = update.phase
             self.activeSampleIndex = update.sampleIndex
+            self.activeSampleTarget = update.sampleTarget
             self.fulfillTourCondition(.trainingStepRun)
+            self.storyStepCounter += 1
+            if self.storyStepCounter >= 2 {
+                self.fulfillTourCondition(.custom(id: "stepped2Times"))
+            }
+            if self.storyStepCounter >= 6 {
+                self.fulfillTourCondition(.custom(id: "stepped6Times"))
+            }
         }
     }
 
@@ -136,6 +147,7 @@ extension CanvasViewModel {
         stepCount = 0
         currentLoss = nil
         activeSampleIndex = nil
+        activeSampleTarget = nil
         nodeOutputs = [:]
         nodeGradients = [:]
         stepPhase = nil

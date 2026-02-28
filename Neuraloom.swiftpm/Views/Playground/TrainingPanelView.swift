@@ -132,7 +132,7 @@ struct TrainingPanelView: View {
                     // Status
                     if viewModel.isTraining || viewModel.currentLoss != nil {
                         Divider().frame(height: 20)
-                        Text(viewModel.currentLoss.map { String(format: "%.4f", $0) } ?? "—")
+                        Text(viewModel.currentLoss.map { clippedFmt($0) } ?? "—")
                             .font(.caption.monospaced().bold())
                             .foregroundStyle(lossColor)
                         Text(viewModel.stepGranularity == .epoch
@@ -181,6 +181,20 @@ struct TrainingPanelView: View {
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isExpanded)
+        .onAppear {
+            epochsText = "\(viewModel.totalEpochs)"
+            lrText = String(viewModel.learningRate)
+            if viewModel.storyExpandTrainingPanel {
+                isExpanded = true
+                viewModel.storyExpandTrainingPanel = false
+            }
+        }
+        .onChange(of: viewModel.storyExpandTrainingPanel) { _, expand in
+            if expand {
+                isExpanded = true
+                viewModel.storyExpandTrainingPanel = false
+            }
+        }
     }
 
     private func startAutoStep() {

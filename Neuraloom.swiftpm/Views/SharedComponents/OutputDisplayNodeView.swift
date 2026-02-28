@@ -29,7 +29,7 @@ struct OutputDisplayNodeView: View {
                     .buttonStyle(.plain)
                 }
 
-                Text(String(format: "%.4f", displayValue))
+                Text(clippedFmt(displayValue))
                     .font(.system(size: 22, weight: .bold, design: .monospaced))
                     .foregroundStyle(.green)
                     .lineLimit(1)

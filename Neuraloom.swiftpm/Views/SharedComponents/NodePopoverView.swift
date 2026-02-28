@@ -72,17 +72,29 @@ struct NodePopoverView: View {
     @ViewBuilder
     private var lossSection: some View {
         if viewModel.inspectMode {
-            // Inspect mode: badge + unified loss display
+            // Inspect mode: badge + formula + loss display
             HStack(spacing: 6) {
                 badge(viewModel.selectedLossFunction == .mse ? "MSE" : "Cross-Entropy", color: .red)
             }
 
+            // Always show the formula
+            if viewModel.selectedLossFunction == .mse {
+                Text("L = (\u{0177} \u{2212} y)\u{00B2} / n")
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("L = \u{2212}[y\u{00B7}ln(\u{0177}) + (1\u{2212}y)\u{00B7}ln(1\u{2212}\u{0177})]")
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+
             if let loss = viewModel.currentLoss {
+                Divider()
                 HStack {
                     Text("Current Loss (L)")
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(String(format: "%.4f", loss))
+                    Text(clippedFmt(loss))
                         .font(.caption.monospaced().bold())
                 }
 
@@ -110,7 +122,7 @@ struct NodePopoverView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(String(format: "%.4f", loss))
+                    Text(clippedFmt(loss))
                         .font(.caption.monospaced().bold())
                 }
             }
@@ -134,7 +146,7 @@ struct NodePopoverView: View {
                     Text("Output")
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(String(format: "%.4f", output))
+                    Text(clippedFmt(output))
                         .font(.caption.monospaced().bold())
                 }
 
@@ -450,16 +462,24 @@ struct LossComputationView: View {
     private var resolved: (yHat: Double, target: Double, predId: UUID)? {
         guard let pc = predConn,
               let yh = viewModel.nodeOutputs[pc.sourceNodeId] else { return nil }
-        let nOut = max(1.0, Double(viewModel.nodes.filter(\.isOutput).count))
-        let grad = viewModel.nodeGradients[pc.sourceNodeId] ?? 0
 
         let target: Double
-        switch viewModel.selectedLossFunction {
-        case .mse:
-            target = yh - nOut * grad / 2.0
-        case .crossEntropy:
-            let p = max(1e-7, min(1.0 - 1e-7, yh))
-            target = p - grad * p * (1.0 - p)
+        if let sampleTarget = viewModel.activeSampleTarget {
+            // Use the actual ground-truth target sent with the training update
+            let outputNodes = viewModel.nodes.filter(\.isOutput)
+            let outputIndex = outputNodes.firstIndex(where: { $0.id == pc.sourceNodeId }) ?? 0
+            target = outputIndex < sampleTarget.count ? sampleTarget[outputIndex] : sampleTarget[0]
+        } else {
+            // Fallback: reverse-engineer from gradient (only accurate after backward pass)
+            let nOut = max(1.0, Double(viewModel.nodes.filter(\.isOutput).count))
+            let grad = viewModel.nodeGradients[pc.sourceNodeId] ?? 0
+            switch viewModel.selectedLossFunction {
+            case .mse:
+                target = yh - nOut * grad / 2.0
+            case .crossEntropy:
+                let p = max(1e-7, min(1.0 - 1e-7, yh))
+                target = p - grad * p * (1.0 - p)
+            }
         }
         return (yh, target, pc.sourceNodeId)
     }
@@ -478,9 +498,12 @@ struct LossComputationView: View {
                 }
 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 4) {
                         ConceptBoxView(value: compactFmt(loss), label: "L", tint: .red)
                         ConceptOperator(symbol: "=")
+                        if viewModel.selectedLossFunction == .mse {
+                            ConceptOperator(symbol: "(")
+                        }
                         ConceptBoxView(value: compactFmt(vals.yHat), label: "\u{0177}", tint: .orange) {
                             var connIds: Set<UUID> = []
                             if let pc = predConn { connIds.insert(pc.id) }
@@ -492,6 +515,9 @@ struct LossComputationView: View {
                             var connIds: Set<UUID> = []
                             if let tc = trueConn { connIds.insert(tc.id) }
                             viewModel.toggleGlow(nodeIds: Set(dsNodes.map(\.id)), connectionIds: connIds)
+                        }
+                        if viewModel.selectedLossFunction == .mse {
+                            ConceptOperator(symbol: ")\u{00B2}")
                         }
                     }
                 }
@@ -526,7 +552,7 @@ struct DeltaSectionView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 if let d = deltaVal {
-                    Text(String(format: "%.4f", d))
+                    Text(clippedFmt(d))
                         .font(.caption.monospaced().bold())
                 }
             }

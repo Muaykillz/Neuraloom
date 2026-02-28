@@ -82,7 +82,7 @@ struct PlaygroundView: View {
                             ForEach(weightConns) { conn in
                                 if !conn.isUtilityLink {
                                     let pos = bezierPoint(from: conn.from, to: conn.to, detourY: conn.detourY, t: 0.2)
-                                    Text(String(format: "%.2f", conn.value))
+                                    Text(clippedFmt(conn.value, decimals: 2))
                                         .font(.system(size: 9, weight: .semibold, design: .monospaced))
                                         .padding(.horizontal, 4)
                                         .padding(.vertical, 2)
@@ -164,9 +164,11 @@ struct PlaygroundView: View {
                     }
                 }
                 .overlay(alignment: .topTrailing) {
-                    modeSwitcher
-                        .padding(.top, 12)
-                        .padding(.trailing, 16)
+                    if !canvasViewModel.storyHideExitInference {
+                        modeSwitcher
+                            .padding(.top, 12)
+                            .padding(.trailing, 16)
+                    }
                 }
                 .overlay(alignment: .bottomTrailing) {
                     VStack(spacing: 12) {
@@ -229,15 +231,21 @@ struct PlaygroundView: View {
                     }
                 }
                 .onAppear {
+                    canvasViewModel.viewportSize = geometry.size
+                    canvasViewModel.viewportInsets = geometry.safeAreaInsets
                     DispatchQueue.main.async {
                         canvasViewModel.fitToScreen(in: geometry.size, insets: geometry.safeAreaInsets)
                     }
                 }
+                .onChange(of: geometry.size) { _, newSize in
+                    canvasViewModel.viewportSize = newSize
+                    canvasViewModel.viewportInsets = geometry.safeAreaInsets
+                }
                 .overlay(alignment: .bottom) {
                     Group {
-                        if isInference {
+                        if isInference && !canvasViewModel.storyHideInferencePanel {
                             InferencePanelView(viewModel: canvasViewModel)
-                        } else {
+                        } else if !isInference {
                             TrainingPanelView(viewModel: canvasViewModel)
                         }
                     }
@@ -246,6 +254,16 @@ struct PlaygroundView: View {
             }
         }
         .navigationSplitViewStyle(.automatic)
+        .onAppear {
+            if canvasViewModel.storySidebarOpen {
+                columnVisibility = .all
+            }
+        }
+        .onChange(of: canvasViewModel.storySidebarOpen) { _, open in
+            withAnimation(.easeInOut(duration: 0.3)) {
+                columnVisibility = open ? .all : .detailOnly
+            }
+        }
         .alert("Clear Canvas?", isPresented: $isShowingClearConfirm) {
             Button("Clear", role: .destructive) {
                 canvasViewModel.clearCanvas()

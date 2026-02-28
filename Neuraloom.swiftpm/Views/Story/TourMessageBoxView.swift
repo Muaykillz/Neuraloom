@@ -8,14 +8,15 @@ struct TourSpan {
     var italic: Bool = false
     var accent: Bool = false
     var mono: Bool = false
+    var color: Color? = nil
 }
 
 // MARK: - Tour Completion Conditions
 
 enum TourCompletionCondition: Equatable {
     case inspectModeOpened
-    case weightChanged
-    case weightTapped
+    case weightChanged(connectionId: UUID? = nil)
+    case weightTapped(connectionId: UUID? = nil)
     case trainingStepRun
     case trainStarted
     case nodeAdded
@@ -25,8 +26,8 @@ enum TourCompletionCondition: Equatable {
     var key: String {
         switch self {
         case .inspectModeOpened: return "inspectModeOpened"
-        case .weightChanged: return "weightChanged"
-        case .weightTapped: return "weightTapped"
+        case .weightChanged(let id): return id.map { "weightChanged.\($0)" } ?? "weightChanged"
+        case .weightTapped(let id): return id.map { "weightTapped.\($0)" } ?? "weightTapped"
         case .trainingStepRun: return "trainingStepRun"
         case .trainStarted: return "trainStarted"
         case .nodeAdded: return "nodeAdded"
@@ -41,6 +42,7 @@ enum TourCompletionCondition: Equatable {
 enum TourHighlightTarget {
     case node(id: UUID)
     case connection(id: UUID)
+    case weight(id: UUID)
     case glowNodes(ids: Set<UUID>)
 }
 
@@ -51,25 +53,29 @@ struct TourStep {
     let richBody: [[TourSpan]]
     var completionCondition: TourCompletionCondition?
     var highlightTarget: TourHighlightTarget?
+    var buttonLabel: String?
+    var onEnter: (@MainActor @Sendable (CanvasViewModel) -> Void)?
 
     /// Convenience init that keeps existing plain-text callers compiling.
     init(title: String, body: String) {
         self.title = title
         self.richBody = [[TourSpan(text: body)]]
-        self.completionCondition = nil
-        self.highlightTarget = nil
     }
 
     init(
         title: String,
         body: [[TourSpan]],
         completionCondition: TourCompletionCondition? = nil,
-        highlightTarget: TourHighlightTarget? = nil
+        highlightTarget: TourHighlightTarget? = nil,
+        buttonLabel: String? = nil,
+        onEnter: (@MainActor @Sendable (CanvasViewModel) -> Void)? = nil
     ) {
         self.title = title
         self.richBody = body
         self.completionCondition = completionCondition
         self.highlightTarget = highlightTarget
+        self.buttonLabel = buttonLabel
+        self.onEnter = onEnter
     }
 }
 
@@ -81,6 +87,8 @@ struct TourMessageBoxView: View {
     let onDismiss: () -> Void
     var canvasViewModel: CanvasViewModel?
 
+    @State private var isCollapsed = false
+
     private var step: TourStep { steps[currentStep] }
     private var isFirst: Bool { currentStep == 0 }
     private var isLast: Bool { currentStep == steps.count - 1 }
@@ -91,9 +99,14 @@ struct TourMessageBoxView: View {
         return !vm.fulfilledTourConditions.contains(condition.key)
     }
 
+    private var nextLabel: String {
+        if let custom = step.buttonLabel, isLast { return custom }
+        return isLast ? "Done" : "Next"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Title row
+            // Title row (always visible)
             HStack(alignment: .top) {
                 Circle()
                     .fill(Color.orange)
@@ -105,8 +118,12 @@ struct TourMessageBoxView: View {
 
                 Spacer()
 
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        isCollapsed.toggle()
+                    }
+                } label: {
+                    Image(systemName: isCollapsed ? "chevron.down" : "chevron.up")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: 28, height: 28)
@@ -115,63 +132,65 @@ struct TourMessageBoxView: View {
                 .buttonStyle(.plain)
             }
 
-            // Body — rich text
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(Array(step.richBody.enumerated()), id: \.offset) { _, spans in
-                    buildTourLine(spans)
-                }
-            }
-            .fixedSize(horizontal: false, vertical: true)
-
-            // Footer navigation
-            HStack {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        currentStep -= 1
+            if !isCollapsed {
+                // Body — rich text
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(step.richBody.enumerated()), id: \.offset) { _, spans in
+                        buildTourLine(spans)
                     }
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(isFirst ? .tertiary : .primary)
                 }
-                .buttonStyle(.plain)
-                .disabled(isFirst)
+                .fixedSize(horizontal: false, vertical: true)
 
-                Spacer()
-
-                Text("\(currentStep + 1) of \(steps.count)")
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Button {
-                    if isLast {
-                        onDismiss()
-                    } else {
+                // Footer navigation
+                HStack {
+                    Button {
                         withAnimation(.easeInOut(duration: 0.25)) {
-                            currentStep += 1
+                            currentStep -= 1
+                        }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(isFirst ? .tertiary : .primary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isFirst)
+
+                    Spacer()
+
+                    Text("\(currentStep + 1) of \(steps.count)")
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Button {
+                        if isLast {
+                            onDismiss()
+                        } else {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                currentStep += 1
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            if isNextLocked {
+                                Image(systemName: "lock.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            Text(nextLabel)
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            if !isLast && !isNextLocked {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
                         }
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        if isNextLocked {
-                            Image(systemName: "lock.fill")
-                                .font(.system(size: 11, weight: .semibold))
-                        }
-                        Text(isLast ? "Done" : "Next")
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        if !isLast && !isNextLocked {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(isNextLocked ? .gray : .orange)
+                    .disabled(isNextLocked)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(isNextLocked ? .gray : .orange)
-                .disabled(isNextLocked)
+                .padding(.top, 4)
             }
-            .padding(.top, 4)
         }
         .padding(20)
         .background(
@@ -204,7 +223,7 @@ struct TourMessageBoxView: View {
                 font = font.italic()
             }
 
-            let color: Color = span.accent ? .orange : .secondary
+            let color: Color = span.color ?? (span.accent ? .orange : .secondary)
 
             let styledSpan = Text(span.text)
                 .font(font)

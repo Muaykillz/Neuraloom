@@ -83,11 +83,27 @@ struct NodeViewModel: Identifiable {
 // MARK: - Connection View Model
 
 struct ConnectionViewModel: Identifiable {
-    let id: UUID = UUID()
+    let id: UUID
     var sourceNodeId: UUID
     var targetNodeId: UUID
     var value: Double = 0.0
     var gradient: Double = 0.0
+
+    init(sourceNodeId: UUID, targetNodeId: UUID, value: Double = 0.0, gradient: Double = 0.0) {
+        self.id = UUID()
+        self.sourceNodeId = sourceNodeId
+        self.targetNodeId = targetNodeId
+        self.value = value
+        self.gradient = gradient
+    }
+
+    init(id: UUID, sourceNodeId: UUID, targetNodeId: UUID, value: Double = 0.0, gradient: Double = 0.0) {
+        self.id = id
+        self.sourceNodeId = sourceNodeId
+        self.targetNodeId = targetNodeId
+        self.value = value
+        self.gradient = gradient
+    }
 }
 
 // MARK: - Drawable Connection

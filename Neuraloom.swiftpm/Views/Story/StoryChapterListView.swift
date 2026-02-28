@@ -33,7 +33,11 @@ struct StoryChapterListView: View {
                                     delay: Double(index) * 0.05
                                 ) {
                                     withAnimation(.easeInOut(duration: 0.4)) {
-                                        activePhase = .cutscene(chapter.id)
+                                        if cutscenePages(for: chapter.id) != nil {
+                                            activePhase = .cutscene(chapter.id)
+                                        } else if tourSteps(for: chapter.id) != nil {
+                                            activePhase = .playground(chapter.id)
+                                        }
                                     }
                                 }
                             }
@@ -95,7 +99,8 @@ struct StoryChapterListView: View {
                         withAnimation(.easeInOut(duration: 0.4)) {
                             activePhase = nil
                         }
-                    }
+                    },
+                    canvasSetup: canvasSetup(for: chapterID)
                 )
                 .transition(.scale(scale: 0.95).combined(with: .opacity))
             }
@@ -111,6 +116,8 @@ struct StoryChapterListView: View {
     private func cutscenePages(for chapterID: Int) -> [CutscenePage]? {
         switch chapterID {
         case 1: return ChapterContent.chapter1Cutscene
+        case 2: return ChapterContent.chapter2Cutscene
+        case 3: return nil  // No cutscene — straight to playground
         default: return nil
         }
     }
@@ -118,6 +125,17 @@ struct StoryChapterListView: View {
     private func tourSteps(for chapterID: Int) -> [TourStep]? {
         switch chapterID {
         case 1: return ChapterContent.chapter1Tour
+        case 2: return ChapterContent.chapter2Tour
+        case 3: return ChapterContent.chapter3Tour
+        default: return nil
+        }
+    }
+
+    private func canvasSetup(for chapterID: Int) -> ((CanvasViewModel) -> Void)? {
+        switch chapterID {
+        case 1: return { $0.setupChapter1Scenario() }
+        case 2: return { $0.setupChapter2Scenario() }
+        case 3: return { $0.setupChapter3Scenario() }
         default: return nil
         }
     }

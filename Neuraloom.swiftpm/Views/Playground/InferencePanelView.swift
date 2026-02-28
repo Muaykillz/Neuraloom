@@ -68,7 +68,7 @@ struct InferencePanelView: View {
                         }
                     }
                     .foregroundStyle(.white)
-                    .frame(height: 20)
+                    .fixedSize()
                     .padding(.leading, 20)
                     .padding(.trailing, isDatasetMode ? 12 : 20)
                     .padding(.vertical, 10)
@@ -131,7 +131,7 @@ struct InferencePanelView: View {
                         Text("Result")
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
-                        Text(String(format: "%.4f", value))
+                        Text(clippedFmt(value))
                             .font(.caption.monospaced().bold())
                             .foregroundStyle(.green)
                     }
