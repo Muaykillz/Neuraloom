@@ -62,7 +62,7 @@ struct NodeViewModel: Identifiable {
     let id: UUID
     var position: CGPoint
     var type: NodeType
-    var activation: ActivationType = .relu
+    var activation: ActivationType = .linear
     var role: NodeRole = .hidden
     var datasetConfig: DatasetNodeConfig?
     var lossConfig: LossNodeConfig?

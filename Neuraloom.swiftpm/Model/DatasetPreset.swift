@@ -85,11 +85,11 @@ enum DatasetPreset: String, CaseIterable, Sendable {
 }
 
 struct DatasetNodeConfig {
-    var preset: DatasetPreset = .xor
+    var preset: DatasetPreset = .linear
     var columnPortIds: [UUID]
     var cachedRows: [[Double]]
 
-    init(preset: DatasetPreset = .xor) {
+    init(preset: DatasetPreset = .linear) {
         self.preset = preset
         self.columnPortIds = preset.columns.map { _ in UUID() }
         self.cachedRows = preset.rows
